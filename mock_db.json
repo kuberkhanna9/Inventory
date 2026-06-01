@@ -1,0 +1,49 @@
+{
+  "profiles": [
+    {
+      "id": "usr-superadmin",
+      "fullName": "Super Admin",
+      "role": "SUPERADMIN",
+      "active": true,
+      "createdAt": "2026-05-30T11:21:10.430Z"
+    },
+    {
+      "id": "usr-accounts",
+      "fullName": "Accounts Department",
+      "role": "ACCOUNTS",
+      "active": true,
+      "createdAt": "2026-05-30T11:21:10.430Z"
+    },
+    {
+      "id": "usr-inventory",
+      "fullName": "Inventory Department",
+      "role": "INVENTORY",
+      "active": true,
+      "createdAt": "2026-05-30T11:21:10.430Z"
+    },
+    {
+      "id": "usr-retail",
+      "fullName": "Retail Department",
+      "role": "RETAIL",
+      "active": true,
+      "createdAt": "2026-05-30T11:21:10.430Z"
+    }
+  ],
+  "products": [],
+  "variants": [],
+  "transactions": [],
+  "priceHistory": [],
+  "auditLogs": [
+    {
+      "id": "a-1",
+      "userId": "usr-superadmin",
+      "action": "INITIALIZE",
+      "module": "SYSTEM",
+      "description": "System database initialized cleanly for production release.",
+      "createdAt": "2026-05-30T10:56:56.975Z"
+    }
+  ],
+  "colors": [],
+  "sizes": [],
+  "requests": []
+}
