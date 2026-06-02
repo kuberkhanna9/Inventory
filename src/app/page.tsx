@@ -45,7 +45,7 @@ export default async function DashboardPage() {
         {/* Top Operational Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-6 border-b border-slate-200 mb-8">
           <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Knitwear Inventory Dashboard</h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Lall Ji Knitwears Inventory Management System</h1>
             <p className="text-slate-500 text-xs mt-1">Operational status, live ledger balances, and pending department approvals.</p>
           </div>
           <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-[11px] font-bold text-slate-600 shadow-sm">

@@ -6,7 +6,8 @@ import {
   createStockRequest, 
   reviewStockRequest,
   updateVariantPricing, 
-  logAudit
+  logAudit,
+  deleteVariant
 } from '@/utils/db';
 import { getSession, authenticateUser, clearSession } from '@/utils/session';
 import { revalidatePath } from 'next/cache';
@@ -342,3 +343,24 @@ export async function bulkOperationsAction(
     return { success: false, error: err.message || 'Bulk operation failed' };
   }
 }
+
+export async function deleteVariantAction(variantId: string): Promise<{ success: boolean; error?: string; message?: string }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can delete SKU variants.' };
+  }
+
+  try {
+    const success = await deleteVariant(variantId, user.id);
+    if (!success) {
+      return { success: false, error: 'SKU variant not found.' };
+    }
+    revalidatePath('/');
+    revalidatePath('/inventory');
+    revalidatePath('/requests');
+    return { success: true, message: 'SKU variant and all associated records permanently soft deleted successfully.' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to delete SKU' };
+  }
+}
+

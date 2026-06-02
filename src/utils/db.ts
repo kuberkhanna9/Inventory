@@ -633,6 +633,28 @@ export async function updateVariantPricing(
   return true;
 }
 
+export async function deleteVariant(variantId: string, userId: string): Promise<boolean> {
+  const varRes = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.id, variantId)).limit(1);
+  if (varRes.length === 0) return false;
+  const variant = varRes[0];
+
+  // Update variant active = false
+  await pgDb.update(schema.productVariants)
+    .set({ active: false })
+    .where(eq(schema.productVariants.id, variantId));
+
+  // Log audit trail
+  await logAudit(
+    userId,
+    'DELETE_SKU',
+    'CATALOG',
+    `Soft deleted SKU "${variant.sku}" (Barcode: "${variant.sku}")`
+  );
+
+  return true;
+}
+
+
 function handleDatabaseError(err: any, contextAction: string): { success: false; error: string } {
   // 1. Log the actual raw PostgreSQL error to developer console.error for tracing
   console.error(`ACTUAL POSTGRESQL ERROR [during ${contextAction}]:`, {

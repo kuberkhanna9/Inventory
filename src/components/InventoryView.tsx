@@ -8,7 +8,8 @@ import {
   createVariantAction, 
   bulkOperationsAction,
   createStockRequestAction,
-  updatePricingAction
+  updatePricingAction,
+  deleteVariantAction
 } from '@/app/actions';
 import { 
   Search, 
@@ -86,6 +87,52 @@ export default function InventoryView({
 
   // Active Variant detail modal
   const [selectedVariant, setSelectedVariant] = useState<ComputedInventoryItem | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  // Delete SKU states
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+
+  // Close drawer helpers & key listeners
+  const handleDrawerBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      setSelectedVariant(null);
+      setIsDrawerOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isDeleteModalOpen) {
+          setIsDeleteModalOpen(false);
+        } else {
+          setSelectedVariant(null);
+          setIsDrawerOpen(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isDeleteModalOpen]);
+
+  const handleDeleteConfirm = () => {
+    if (deleteConfirmInput !== 'DELETE' || !selectedVariant) return;
+
+    startTransition(async () => {
+      const res = await deleteVariantAction(selectedVariant.variantId);
+      if (res.success) {
+        setIsDeleteModalOpen(false);
+        setSelectedVariant(null);
+        setIsDrawerOpen(false);
+        alert(res.message);
+      } else {
+        alert(res.error || 'Failed to delete SKU variant');
+      }
+    });
+  };
 
   // Modal display states
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -196,6 +243,7 @@ export default function InventoryView({
     const item = inventoryItems.find(v => v.barcode === barcode || v.sku.toUpperCase() === barcode.toUpperCase());
     if (item) {
       setSelectedVariant(item);
+      setIsDrawerOpen(true);
       setScanInput('');
       setScanMode(false);
     } else {
@@ -605,7 +653,10 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
       {/* Printable Area Hook for Barcode labels */}
       <BarcodeLabels
         isOpen={isLabelStudioOpen}
-        onClose={() => setIsLabelStudioOpen(false)}
+        onClose={() => {
+          setIsLabelStudioOpen(false);
+          setSelectedVariant(null);
+        }}
         selectedVariants={
           selectedVariantIds.length > 0 
             ? inventoryItems.filter(v => selectedVariantIds.includes(v.variantId))
@@ -616,7 +667,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
       {/* 1. Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Knitwear ERP Inventory</h1>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Lall Ji Knitwears Inventory Management System</h1>
           <p className="text-slate-500 text-xs mt-1">Light-mode, barcode-centered finished goods ledger catalog.</p>
         </div>
 
@@ -624,7 +675,10 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           {/* Barcode labels generator trigger */}
           {(selectedVariantIds.length > 0 || selectedVariant) && (
             <button
-              onClick={() => setIsLabelStudioOpen(true)}
+              onClick={() => {
+                setIsDrawerOpen(false);
+                setIsLabelStudioOpen(true);
+              }}
               className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 no-print"
             >
               <Printer size={14} className="text-slate-800" />
@@ -861,7 +915,10 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                   return (
                     <tr 
                       key={item.variantId} 
-                      onClick={() => setSelectedVariant(item)}
+                      onClick={() => {
+                        setSelectedVariant(item);
+                        setIsDrawerOpen(true);
+                      }}
                       className={`hover:bg-slate-50 transition-colors cursor-pointer ${
                         isSelected ? 'bg-slate-50/70' : ''
                       }`}
@@ -946,12 +1003,18 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
       {/* -----------------------------------------------------------------------------
           VARIANT DETAIL SIDE MODAL
           ----------------------------------------------------------------------------- */}
-      {selectedVariant && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/45 backdrop-blur-xs no-print">
-          <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col justify-between animate-slide-in overflow-hidden">
+      {selectedVariant && isDrawerOpen && (
+        <div 
+          onClick={handleDrawerBackdropClick}
+          className="fixed inset-0 z-50 flex justify-end bg-black/45 backdrop-blur-xs no-print"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col justify-between animate-slide-in overflow-hidden"
+          >
             {/* Modal Header */}
             <div className="p-6 border-b border-slate-200 flex justify-between items-start bg-slate-50">
-              <div className="space-y-1">
+              <div className="space-y-1 bg-transparent">
                 <span className="text-[10px] font-black px-2 py-0.5 bg-slate-800 text-white rounded-md uppercase tracking-wider font-mono">
                   {selectedVariant.sku}
                 </span>
@@ -960,17 +1023,23 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                   Barcode: <span className="font-mono font-bold text-slate-700">{selectedVariant.barcode}</span> • Col: {selectedVariant.colorName} • Size {selectedVariant.sizeName}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setIsLabelStudioOpen(true)}
-                  className="p-1 hover:bg-slate-200 rounded-lg text-slate-600 hover:text-slate-900 cursor-pointer flex items-center gap-1 text-xs font-bold"
+                  onClick={() => {
+                    setIsDrawerOpen(false);
+                    setIsLabelStudioOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-slate-700 hover:text-slate-900 cursor-pointer flex items-center gap-1.5 text-xs font-bold transition-all shadow-xs"
                   title="Print Barcode Label"
                 >
-                  <Printer size={16} />
-                  <span>Label</span>
+                  <Printer size={14} className="text-slate-600" />
+                  <span>Print Label</span>
                 </button>
                 <button 
-                  onClick={() => setSelectedVariant(null)}
+                  onClick={() => {
+                    setSelectedVariant(null);
+                    setIsDrawerOpen(false);
+                  }}
                   className="p-1 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
                 >
                   <X size={20} />
@@ -1059,12 +1128,28 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
             {/* Modal Footer */}
             <div className="p-6 border-t border-slate-200 bg-slate-50 flex justify-between items-center text-xs">
               <span className="text-slate-400 font-semibold font-mono">Location: {selectedVariant.rackLocation}</span>
-              <button 
-                onClick={() => setSelectedVariant(null)}
-                className="bg-slate-800 text-white px-4 py-2 rounded-xl font-bold cursor-pointer hover:bg-slate-700"
-              >
-                Close View
-              </button>
+              <div className="flex gap-2">
+                {isSuperAdmin && (
+                  <button 
+                    onClick={() => {
+                      setDeleteConfirmInput('');
+                      setIsDeleteModalOpen(true);
+                    }}
+                    className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 px-4 py-2 rounded-xl font-bold cursor-pointer transition-colors"
+                  >
+                    Delete SKU
+                  </button>
+                )}
+                <button 
+                  onClick={() => {
+                    setSelectedVariant(null);
+                    setIsDrawerOpen(false);
+                  }}
+                  className="bg-slate-800 text-white px-4 py-2 rounded-xl font-bold cursor-pointer hover:bg-slate-700"
+                >
+                  Close View
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1632,6 +1717,59 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                 {isPending ? 'Registering variant SKU...' : 'Register Variant SKU'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {isDeleteModalOpen && selectedVariant && (
+        <div 
+          onClick={() => setIsDeleteModalOpen(false)}
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 no-print"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full space-y-6 shadow-2xl animate-fade-in"
+          >
+            <div className="flex items-start gap-3 text-red-600 pb-2 border-b border-slate-100">
+              <AlertTriangle className="shrink-0 animate-pulse" size={24} />
+              <div>
+                <h3 className="text-base font-black text-slate-900 leading-tight">Confirm Permanent SKU Deletion</h3>
+                <p className="text-[10px] font-semibold text-slate-400 mt-0.5">Style: {selectedVariant.productName} ({selectedVariant.sku})</p>
+              </div>
+            </div>
+
+            <p className="text-slate-600 text-xs leading-relaxed font-medium">
+              Are you sure you want to permanently delete this SKU and all associated inventory records? This action cannot be undone.
+            </p>
+
+            <div className="space-y-2">
+              <label className="block text-[10px] font-black text-slate-400 uppercase">
+                Type <span className="font-mono text-red-500 font-extrabold select-all">DELETE</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmInput}
+                onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                placeholder="Type DELETE..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 font-bold focus:outline-none focus:border-red-500 uppercase tracking-wider font-mono"
+              />
+            </div>
+
+            <div className="flex gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer font-sans"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={deleteConfirmInput !== 'DELETE'}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-xs font-black transition-all shadow-md shadow-red-100 cursor-pointer font-sans"
+              >
+                Permanently Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
