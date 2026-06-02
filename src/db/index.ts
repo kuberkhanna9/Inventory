@@ -3,7 +3,18 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
-const connectionString = process.env.DATABASE_URL;
+let connectionString = process.env.DATABASE_URL;
+let variableUsed = 'DATABASE_URL';
+
+if (!connectionString && process.env.POSTGRES_URL) {
+  connectionString = process.env.POSTGRES_URL;
+  variableUsed = 'POSTGRES_URL';
+}
+if (!connectionString && process.env.POSTGRES_PRISMA_URL) {
+  connectionString = process.env.POSTGRES_PRISMA_URL;
+  variableUsed = 'POSTGRES_PRISMA_URL';
+}
+
 const isBuilding = process.env.NEXT_PHASE === 'phase-production-build' || process.env.NEXT_PHASE === 'phase-export' || process.env.NEXT_PHASE?.includes('build');
 
 if (!connectionString) {
@@ -14,11 +25,23 @@ if (!connectionString) {
       "CRITICAL: DATABASE_URL environment variable is missing! LJK Inventory ERP requires a valid Supabase PostgreSQL connection string to start. Local JSON mock fallbacks are completely disabled."
     );
   }
+} else {
+  // Temporary startup logging
+  try {
+    const cleanUrl = connectionString.replace('postgresql://', 'http://').replace('postgres://', 'http://');
+    const parsed = new URL(cleanUrl);
+    console.log("Database Variable Used:", variableUsed);
+    console.log("Database Host:", parsed.hostname);
+  } catch (err) {
+    console.log("Database Variable Used:", variableUsed);
+    console.log("Database Host: <invalid format>");
+  }
 }
 
 // Ensure prefetch is disabled for transactions compatibility (e.g., Supabase transaction pooling mode)
 const client = (isBuilding && !connectionString) ? null : postgres(connectionString!, { prepare: false });
 
 export const db = client ? drizzle(client, { schema }) : (null as any);
+
 
 
