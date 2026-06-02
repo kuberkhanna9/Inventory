@@ -16,7 +16,7 @@ const SALT = 'ljk_salt_2026';
 // Predefined Fixed System Accounts with Secure Password Hashes
 export const FIXED_ACCOUNTS = [
   {
-    id: 'usr-superadmin',
+    id: 'b1100000-0000-0000-0000-000000000001',
     username: 'Khanna',
     fullName: 'Super Admin',
     role: 'SUPERADMIN' as const,
@@ -24,7 +24,7 @@ export const FIXED_ACCOUNTS = [
     active: true
   },
   {
-    id: 'usr-accounts',
+    id: 'b1100000-0000-0000-0000-000000000002',
     username: 'accounts',
     fullName: 'Accounts Department',
     role: 'ACCOUNTS' as const,
@@ -32,7 +32,7 @@ export const FIXED_ACCOUNTS = [
     active: true
   },
   {
-    id: 'usr-inventory',
+    id: 'b1100000-0000-0000-0000-000000000003',
     username: 'inventory',
     fullName: 'Inventory Department',
     role: 'INVENTORY' as const,
@@ -40,7 +40,7 @@ export const FIXED_ACCOUNTS = [
     active: true
   },
   {
-    id: 'usr-retail',
+    id: 'b1100000-0000-0000-0000-000000000004',
     username: 'retail',
     fullName: 'Retail Department',
     role: 'RETAIL' as const,

@@ -261,15 +261,20 @@ export async function createStockRequest(
     }
   }
 
-  const res = await pgDb.insert(schema.stockRequests).values({
-    variantId: data.variantId,
-    requestType: data.requestType as any,
-    quantity: qty,
-    referenceNumber: data.referenceNumber || null,
-    invoiceNumber: data.invoiceNumber || null,
-    remarks: data.remarks || null,
-    createdBy: userId
-  }).returning();
+  let res;
+  try {
+    res = await pgDb.insert(schema.stockRequests).values({
+      variantId: data.variantId,
+      requestType: data.requestType as any,
+      quantity: qty,
+      referenceNumber: data.referenceNumber || null,
+      invoiceNumber: data.invoiceNumber || null,
+      remarks: data.remarks || null,
+      createdBy: userId
+    }).returning();
+  } catch (err: any) {
+    return handleDatabaseError(err, 'createStockRequest');
+  }
 
   const r = res[0];
   const newReq: StockRequest = {
@@ -310,51 +315,56 @@ export async function reviewStockRequest(
   if (varRes.length === 0) return { success: false, error: 'SKU variant not found.' };
   const variant = varRes[0];
 
-  if (status === 'APPROVED') {
-    const allTxRes = await pgDb.select().from(schema.stockTransactions);
-    const transactions = allTxRes.map(t => ({
-      id: t.id,
-      requestId: t.requestId,
-      variantId: t.variantId,
-      transactionType: t.transactionType as any,
-      quantity: t.quantity,
-      referenceNumber: t.referenceNumber || undefined,
-      invoiceNumber: t.invoiceNumber || undefined,
-      remarks: t.remarks || undefined,
-      createdBy: t.createdBy,
-      createdAt: t.createdAt.toISOString()
-    }));
+  let updatedRes;
+  try {
+    if (status === 'APPROVED') {
+      const allTxRes = await pgDb.select().from(schema.stockTransactions);
+      const transactions = allTxRes.map(t => ({
+        id: t.id,
+        requestId: t.requestId,
+        variantId: t.variantId,
+        transactionType: t.transactionType as any,
+        quantity: t.quantity,
+        referenceNumber: t.referenceNumber || undefined,
+        invoiceNumber: t.invoiceNumber || undefined,
+        remarks: t.remarks || undefined,
+        createdBy: t.createdBy,
+        createdAt: t.createdAt.toISOString()
+      }));
 
-    const currentStock = compileStockForVariant(req.variantId, transactions);
-    const qty = Number(req.quantity);
-    const outTypes = ['SALE', 'DAMAGE_REPAIRABLE', 'DAMAGE_NON_REPAIRABLE', 'ADJUSTMENT_OUT'];
+      const currentStock = compileStockForVariant(req.variantId, transactions);
+      const qty = Number(req.quantity);
+      const outTypes = ['SALE', 'DAMAGE_REPAIRABLE', 'DAMAGE_NON_REPAIRABLE', 'ADJUSTMENT_OUT'];
 
-    if (outTypes.includes(req.requestType as any) && currentStock.readyStock < qty) {
-      return {
-        success: false,
-        error: `Action aborted! Stock deficit occurred: requested ${qty} units, but only ${currentStock.readyStock} are in stock.`
-      };
+      if (outTypes.includes(req.requestType as any) && currentStock.readyStock < qty) {
+        return {
+          success: false,
+          error: `Action aborted! Stock deficit occurred: requested ${qty} units, but only ${currentStock.readyStock} are in stock.`
+        };
+      }
+
+      // Insert approved ledger transaction entry!
+      await pgDb.insert(schema.stockTransactions).values({
+        requestId: req.id,
+        variantId: req.variantId,
+        transactionType: req.requestType as any,
+        quantity: qty,
+        referenceNumber: req.referenceNumber || null,
+        invoiceNumber: req.invoiceNumber || null,
+        remarks: req.remarks || null,
+        createdBy: req.createdBy
+      });
     }
 
-    // Insert approved ledger transaction entry!
-    await pgDb.insert(schema.stockTransactions).values({
-      requestId: req.id,
-      variantId: req.variantId,
-      transactionType: req.requestType as any,
-      quantity: qty,
-      referenceNumber: req.referenceNumber || null,
-      invoiceNumber: req.invoiceNumber || null,
-      remarks: req.remarks || null,
-      createdBy: req.createdBy
-    });
+    // Update request review fields
+    updatedRes = await pgDb.update(schema.stockRequests).set({
+      status: status as any,
+      reviewedBy: userId,
+      reviewedAt: new Date()
+    }).where(eq(schema.stockRequests.id, requestId)).returning();
+  } catch (err: any) {
+    return handleDatabaseError(err, 'reviewStockRequest');
   }
-
-  // Update request review fields
-  const updatedRes = await pgDb.update(schema.stockRequests).set({
-    status: status as any,
-    reviewedBy: userId,
-    reviewedAt: new Date()
-  }).where(eq(schema.stockRequests.id, requestId)).returning();
 
   const r = updatedRes[0];
   const updatedReq: StockRequest = {
@@ -621,4 +631,110 @@ export async function updateVariantPricing(
 
   await logAudit(userId, 'PRICE_UPDATE', 'PRICING', `Updated pricing values for SKU "${variant.sku}"`);
   return true;
+}
+
+function handleDatabaseError(err: any, contextAction: string): { success: false; error: string } {
+  // 1. Log the actual raw PostgreSQL error to developer console.error for tracing
+  console.error(`ACTUAL POSTGRESQL ERROR [during ${contextAction}]:`, {
+    message: err.message,
+    code: err.code,
+    detail: err.detail,
+    table: err.table,
+    column: err.column,
+    constraint: err.constraint,
+    stack: err.stack
+  });
+
+  // 2. Parse and build user-friendly error without any raw SQL
+  const code = err.code || (err.cause && (err.cause as any).code) || '';
+  const detail = err.detail || (err.cause && (err.cause as any).detail) || '';
+  const constraint = err.constraint || (err.cause && (err.cause as any).constraint) || '';
+  const table = err.table || (err.cause && (err.cause as any).table) || '';
+  const column = err.column || (err.cause && (err.cause as any).column) || '';
+
+  let raw = '';
+  if (err.message_primary) {
+    raw = err.message_primary;
+  } else if (err.cause && (err.cause as any).message_primary) {
+    raw = (err.cause as any).message_primary;
+  } else if (err.cause && (err.cause as any).message) {
+    raw = (err.cause as any).message;
+  } else if (err.message) {
+    raw = err.message;
+  } else {
+    raw = String(err);
+  }
+
+  // Clean raw from SQL queries/Failed query wrapper
+  if (raw.includes('Failed query:') || raw.includes('insert into') || raw.includes('select') || raw.includes('update') || raw.includes('delete')) {
+    if (code) {
+      if (code === '23503') {
+        raw = `insert or update on table "${table || 'unknown'}" violates foreign key constraint "${constraint || 'unknown'}"`;
+      } else if (code === '23505') {
+        raw = `duplicate key value violates unique constraint "${constraint || 'unknown'}"`;
+      } else if (code === '23502') {
+        raw = `null value in column "${column || 'unknown'}" violates not-null constraint`;
+      } else if (code === '23514') {
+        raw = `new row for relation "${table || 'unknown'}" violates check constraint "${constraint || 'unknown'}"`;
+      } else if (code === '42P01') {
+        raw = `relation "${table || 'unknown'}" does not exist`;
+      } else if (code === '42703') {
+        raw = `column "${column || 'unknown'}" of relation "${table || 'unknown'}" does not exist`;
+      } else if (code === '22P02') {
+        raw = `invalid input value for enum or type`;
+      }
+    } else {
+      if (raw.includes('does not exist')) {
+        if (raw.includes('relation') || raw.includes('table')) {
+          raw = 'relation "stock_requests" does not exist';
+        } else if (raw.includes('column')) {
+          raw = 'column "reviewed_by" does not exist';
+        }
+      } else if (raw.includes('violates foreign key')) {
+        raw = 'insert or update on table violates foreign key constraint';
+      } else if (raw.includes('violates not-null')) {
+        raw = 'null value violates not-null constraint';
+      } else if (raw.includes('violates check constraint') || raw.includes('violates constraint')) {
+        raw = 'new row violates check constraint';
+      } else if (raw.includes('invalid input value for enum') || raw.includes('invalid input syntax for type')) {
+        raw = 'invalid input value for enum';
+      } else {
+        raw = `Database operation failed during ${contextAction}.`;
+      }
+    }
+  }
+
+  let userFriendly = '';
+  if (code === '42P01' || raw.includes('relation') && raw.includes('does not exist')) {
+    userFriendly = `Database Error: Table relation "${table || 'stock_requests'}" does not exist in the database. Please run the database setup migrations.`;
+  } else if (code === '42703' || raw.includes('column') && raw.includes('does not exist')) {
+    userFriendly = `Database Error: Column "${column || 'unknown'}" does not exist in database table "${table || 'unknown'}".`;
+  } else if (code === '23503' || raw.includes('foreign key')) {
+    if (constraint.includes('created_by') || raw.includes('created_by') || detail.includes('created_by')) {
+      userFriendly = 'Submission Failed: The active user session has an invalid profile UUID. Please re-authenticate.';
+    } else if (constraint.includes('variant_id') || raw.includes('variant_id') || detail.includes('variant_id')) {
+      userFriendly = 'Submission Failed: The selected knitwear garment SKU variant does not exist in the database.';
+    } else {
+      userFriendly = `Submission Failed: A referenced record was not found in the database. (Detail: ${detail || raw})`;
+    }
+  } else if (code === '23502' || raw.includes('null value')) {
+    userFriendly = `Validation Failed: A required field (${column || 'unknown'}) was not provided or contains a null value.`;
+  } else if (code === '23514' || raw.includes('check constraint')) {
+    if (constraint.includes('check_sale_invoice') || raw.includes('check_sale_invoice')) {
+      userFriendly = 'Validation Failed: An invoice number is strictly required for wholesale SALE transactions (minimum 3 characters).';
+    } else if (constraint.includes('quantity') || raw.includes('quantity')) {
+      userFriendly = 'Validation Failed: Quantity must be a positive integer greater than zero.';
+    } else {
+      userFriendly = `Validation Failed: The data violates a database constraint. (${constraint || raw})`;
+    }
+  } else if (code === '22P02' || raw.includes('invalid input value for enum') || raw.includes('invalid input syntax for type')) {
+    userFriendly = 'Validation Failed: One or more fields contain an invalid selection or enum value.';
+  } else {
+    userFriendly = `Database Error: ${raw}`;
+  }
+
+  return {
+    success: false,
+    error: userFriendly
+  };
 }
