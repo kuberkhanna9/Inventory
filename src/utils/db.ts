@@ -46,7 +46,7 @@ export async function getProfileById(id: string): Promise<Profile | null> {
 // Products
 export async function getProducts(): Promise<Product[]> {
   const res = await pgDb.select().from(schema.products).where(eq(schema.products.active, true));
-  return res.map(p => ({
+  return res.map((p: any) => ({
     id: p.id,
     productName: p.productName,
     category: p.category,
@@ -87,7 +87,7 @@ export async function createProduct(data: Omit<Product, 'id' | 'createdAt' | 'ac
 // Colors and Sizes
 export async function getProductColors(productId: string): Promise<ProductColor[]> {
   const res = await pgDb.select().from(schema.productColors).where(eq(schema.productColors.productId, productId));
-  return res.map(c => ({
+  return res.map((c: any) => ({
     id: c.id,
     productId: c.productId,
     colorName: c.colorName
@@ -96,7 +96,7 @@ export async function getProductColors(productId: string): Promise<ProductColor[
 
 export async function getProductSizes(productId: string): Promise<ProductSize[]> {
   const res = await pgDb.select().from(schema.productSizes).where(eq(schema.productSizes.productId, productId));
-  return res.map(s => ({
+  return res.map((s: any) => ({
     id: s.id,
     productId: s.productId,
     sizeName: s.sizeName
@@ -115,7 +115,7 @@ export async function getVariants(productId?: string): Promise<ProductVariant[]>
     );
   }
   const res = await q;
-  return res.map(v => ({
+  return res.map((v: any) => ({
     id: v.id,
     productId: v.productId,
     sku: v.sku,
@@ -209,7 +209,7 @@ export async function createVariant(data: Omit<ProductVariant, 'id' | 'createdAt
 // Stock Requests
 export async function getStockRequests(): Promise<StockRequest[]> {
   const res = await pgDb.select().from(schema.stockRequests).orderBy(desc(schema.stockRequests.createdAt));
-  return res.map(r => ({
+  return res.map((r: any) => ({
     id: r.id,
     variantId: r.variantId,
     requestType: r.requestType as any,
@@ -235,7 +235,7 @@ export async function createStockRequest(
   const variant = varRes[0];
 
   const allTxRes = await pgDb.select().from(schema.stockTransactions);
-  const transactions = allTxRes.map(t => ({
+  const transactions = allTxRes.map((t: any) => ({
     id: t.id,
     requestId: t.requestId,
     variantId: t.variantId,
@@ -319,7 +319,7 @@ export async function reviewStockRequest(
   try {
     if (status === 'APPROVED') {
       const allTxRes = await pgDb.select().from(schema.stockTransactions);
-      const transactions = allTxRes.map(t => ({
+      const transactions = allTxRes.map((t: any) => ({
         id: t.id,
         requestId: t.requestId,
         variantId: t.variantId,
@@ -428,11 +428,11 @@ export async function getComputedInventory(): Promise<ComputedInventoryItem[]> {
   const sizesList = await pgDb.select().from(schema.productSizes);
 
   for (const v of variantsList) {
-    const prod = productsList.find(p => p.id === v.productId);
+    const prod = productsList.find((p: any) => p.id === v.productId);
     if (!prod) continue;
 
-    const colorObj = colorsList.find(c => c.id === v.colorId);
-    const sizeObj = sizesList.find(s => s.id === v.sizeId);
+    const colorObj = colorsList.find((c: any) => c.id === v.colorId);
+    const sizeObj = sizesList.find((s: any) => s.id === v.sizeId);
 
     const stock = compileStockForVariant(v.id, allTx);
     const cost = Number(v.costPrice);
@@ -499,12 +499,12 @@ export async function getDashboardStats() {
     retailVal += item.inventoryRetailValue;
   }
   
-  const pendingRequestsCount = requests.filter(r => r.status === 'PENDING').length;
+  const pendingRequestsCount = requests.filter((r: any) => r.status === 'PENDING').length;
   const todayStr = new Date().toISOString().slice(0, 10);
-  const approvedTodayCount = requests.filter(r => r.status === 'APPROVED' && r.reviewedAt?.toISOString().startsWith(todayStr)).length;
-  const rejectedTodayCount = requests.filter(r => r.status === 'REJECTED' && r.reviewedAt?.toISOString().startsWith(todayStr)).length;
+  const approvedTodayCount = requests.filter((r: any) => r.status === 'APPROVED' && r.reviewedAt?.toISOString().startsWith(todayStr)).length;
+  const rejectedTodayCount = requests.filter((r: any) => r.status === 'REJECTED' && r.reviewedAt?.toISOString().startsWith(todayStr)).length;
 
-  const recentActivity = auditLogsList.map(a => ({
+  const recentActivity = auditLogsList.map((a: any) => ({
     id: a.id,
     userId: a.userId || undefined,
     action: a.action,
@@ -532,7 +532,7 @@ export async function getDashboardStats() {
 // Audit Logs
 export async function getAuditLogs(): Promise<AuditLog[]> {
   const res = await pgDb.select().from(schema.auditLogs).orderBy(desc(schema.auditLogs.createdAt));
-  return res.map(a => ({
+  return res.map((a: any) => ({
     id: a.id,
     userId: a.userId || undefined,
     action: a.action,
@@ -566,7 +566,7 @@ export async function getPriceHistory(variantId?: string): Promise<PriceHistory[
     q = pgDb.select().from(schema.priceHistory).where(eq(schema.priceHistory.variantId, variantId)).orderBy(desc(schema.priceHistory.createdAt));
   }
   const res = await q;
-  return res.map(p => ({
+  return res.map((p: any) => ({
     id: p.id,
     variantId: p.variantId,
     oldCostPrice: Number(p.oldCostPrice),
@@ -586,7 +586,7 @@ export async function getTransactions(variantId?: string): Promise<StockTransact
     q = pgDb.select().from(schema.stockTransactions).where(eq(schema.stockTransactions.variantId, variantId)).orderBy(desc(schema.stockTransactions.createdAt));
   }
   const res = await q;
-  return res.map(t => ({
+  return res.map((t: any) => ({
     id: t.id,
     requestId: t.requestId,
     variantId: t.variantId,

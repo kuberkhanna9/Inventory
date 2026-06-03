@@ -564,7 +564,9 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                 adjFd.append('requestType', diff > 0 ? 'STOCK_IN' : 'SALE');
                 adjFd.append('quantity', String(Math.abs(diff)));
                 adjFd.append('remarks', `Template import stock sync (Target Available: ${availableQtyVal})`);
-                adjFd.append('invoiceNumber', diff < 0 ? `INV-MIG-${barcodeVal.slice(-4)}` : undefined);
+                if (diff < 0) {
+                  adjFd.append('invoiceNumber', `INV-MIG-${barcodeVal.slice(-4)}`);
+                }
                 
                 const stockRes = await createStockRequestAction({}, adjFd);
                 if (stockRes.success) stockRequestsPosted++;

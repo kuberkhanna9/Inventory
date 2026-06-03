@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Printer, LayoutGrid, CheckSquare, Square } from 'lucide-react';
 import type { ComputedInventoryItem } from '@/utils/db';
 
@@ -14,6 +14,25 @@ export default function BarcodeLabels({ isOpen, onClose, selectedVariants }: Bar
   const [layout, setLayout] = useState<'single' | 'bulk' | 'a4'>('single');
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
   const [bulkQuantities, setBulkQuantities] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
 
   if (!isOpen || selectedVariants.length === 0) return null;
 
@@ -54,7 +73,10 @@ export default function BarcodeLabels({ isOpen, onClose, selectedVariants }: Bar
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 no-print">
+    <div 
+      onClick={handleBackdropClick}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 no-print"
+    >
       {/* Printable Area (visible only during print via custom @media print style sheet) */}
       <style jsx global>{`
         @media print {
