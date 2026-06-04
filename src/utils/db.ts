@@ -4,7 +4,7 @@
 
 import { db as pgDb } from '@/db';
 import * as schema from '@/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { 
   Profile, 
   Product, 
@@ -416,13 +416,16 @@ export interface ComputedInventoryItem {
   inventoryWholesaleValue: number;
   inventoryRetailValue: number;
   status: 'In Stock' | 'Low Stock' | 'Out of Stock';
+  active: boolean;
 }
 
-export async function getComputedInventory(): Promise<ComputedInventoryItem[]> {
+export async function getComputedInventory(includeDeleted?: boolean): Promise<ComputedInventoryItem[]> {
   const allTx = await getTransactions();
   
   const results: ComputedInventoryItem[] = [];
-  const variantsList = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.active, true));
+  const variantsList = includeDeleted
+    ? await pgDb.select().from(schema.productVariants)
+    : await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.active, true));
   const productsList = await pgDb.select().from(schema.products).where(eq(schema.products.active, true));
   const colorsList = await pgDb.select().from(schema.productColors);
   const sizesList = await pgDb.select().from(schema.productSizes);
@@ -465,7 +468,8 @@ export async function getComputedInventory(): Promise<ComputedInventoryItem[]> {
       inventoryCostValue: stock.readyStock * cost,
       inventoryWholesaleValue: stock.readyStock * wholesale,
       inventoryRetailValue: stock.readyStock * mrp,
-      status
+      status,
+      active: v.active
     });
   }
   return results;
@@ -649,6 +653,80 @@ export async function deleteVariant(variantId: string, userId: string): Promise<
     'DELETE_SKU',
     'CATALOG',
     `Soft deleted SKU "${variant.sku}" (Barcode: "${variant.sku}")`
+  );
+
+  return true;
+}
+
+export async function bulkDeleteVariants(variantIds: string[], userId: string): Promise<boolean> {
+  if (variantIds.length === 0) return false;
+
+  // Fetch variant details for audit log before deletion
+  const variants = await pgDb.select().from(schema.productVariants)
+    .where(inArray(schema.productVariants.id, variantIds));
+
+  if (variants.length === 0) return false;
+
+  // Set active = false
+  await pgDb.update(schema.productVariants)
+    .set({ active: false })
+    .where(inArray(schema.productVariants.id, variantIds));
+
+  const deletedSkus = variants.map((v: any) => v.sku);
+
+  // Log bulk audit log
+  await logAudit(
+    userId,
+    'BULK_DELETE_SKU',
+    'CATALOG',
+    `Bulk soft deleted ${variants.length} SKUs: ${deletedSkus.join(', ')}`
+  );
+
+  return true;
+}
+
+export async function restoreVariant(variantId: string, userId: string): Promise<boolean> {
+  const varRes = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.id, variantId)).limit(1);
+  if (varRes.length === 0) return false;
+  const variant = varRes[0];
+
+  // Update variant active = true
+  await pgDb.update(schema.productVariants)
+    .set({ active: true })
+    .where(eq(schema.productVariants.id, variantId));
+
+  // Log audit trail
+  await logAudit(
+    userId,
+    'RESTORE_SKU',
+    'CATALOG',
+    `Restored SKU "${variant.sku}"`
+  );
+
+  return true;
+}
+
+export async function bulkRestoreVariants(variantIds: string[], userId: string): Promise<boolean> {
+  if (variantIds.length === 0) return false;
+
+  const variants = await pgDb.select().from(schema.productVariants)
+    .where(inArray(schema.productVariants.id, variantIds));
+
+  if (variants.length === 0) return false;
+
+  // Set active = true
+  await pgDb.update(schema.productVariants)
+    .set({ active: true })
+    .where(inArray(schema.productVariants.id, variantIds));
+
+  const restoredSkus = variants.map((v: any) => v.sku);
+
+  // Log bulk audit log
+  await logAudit(
+    userId,
+    'BULK_RESTORE_SKU',
+    'CATALOG',
+    `Bulk restored ${variants.length} SKUs: ${restoredSkus.join(', ')}`
   );
 
   return true;

@@ -7,7 +7,10 @@ import {
   reviewStockRequest,
   updateVariantPricing, 
   logAudit,
-  deleteVariant
+  deleteVariant,
+  bulkDeleteVariants,
+  restoreVariant,
+  bulkRestoreVariants
 } from '@/utils/db';
 import { getSession, authenticateUser, clearSession } from '@/utils/session';
 import { revalidatePath } from 'next/cache';
@@ -361,6 +364,66 @@ export async function deleteVariantAction(variantId: string): Promise<{ success:
     return { success: true, message: 'SKU variant and all associated records permanently soft deleted successfully.' };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to delete SKU' };
+  }
+}
+
+export async function bulkDeleteVariantsAction(variantIds: string[]): Promise<{ success: boolean; error?: string; message?: string }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can bulk delete SKU variants.' };
+  }
+
+  try {
+    const success = await bulkDeleteVariants(variantIds, user.id);
+    if (!success) {
+      return { success: false, error: 'No SKU variants found to delete.' };
+    }
+    revalidatePath('/');
+    revalidatePath('/inventory');
+    revalidatePath('/requests');
+    return { success: true, message: `Successfully soft-deleted ${variantIds.length} SKU variants.` };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to bulk delete SKUs' };
+  }
+}
+
+export async function restoreVariantAction(variantId: string): Promise<{ success: boolean; error?: string; message?: string }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can restore SKU variants.' };
+  }
+
+  try {
+    const success = await restoreVariant(variantId, user.id);
+    if (!success) {
+      return { success: false, error: 'SKU variant not found.' };
+    }
+    revalidatePath('/');
+    revalidatePath('/inventory');
+    revalidatePath('/requests');
+    return { success: true, message: 'SKU variant restored successfully.' };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to restore SKU' };
+  }
+}
+
+export async function bulkRestoreVariantsAction(variantIds: string[]): Promise<{ success: boolean; error?: string; message?: string }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can bulk restore SKU variants.' };
+  }
+
+  try {
+    const success = await bulkRestoreVariants(variantIds, user.id);
+    if (!success) {
+      return { success: false, error: 'No SKU variants found to restore.' };
+    }
+    revalidatePath('/');
+    revalidatePath('/inventory');
+    revalidatePath('/requests');
+    return { success: true, message: `Successfully restored ${variantIds.length} SKU variants.` };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to bulk restore SKUs' };
   }
 }
 

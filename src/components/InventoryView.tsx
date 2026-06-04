@@ -9,7 +9,10 @@ import {
   bulkOperationsAction,
   createStockRequestAction,
   updatePricingAction,
-  deleteVariantAction
+  deleteVariantAction,
+  bulkDeleteVariantsAction,
+  restoreVariantAction,
+  bulkRestoreVariantsAction
 } from '@/app/actions';
 import { 
   Search, 
@@ -93,6 +96,11 @@ export default function InventoryView({
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
 
+  // Bulk Delete / Restore / Show Deleted states
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
+  const [bulkDeleteConfirmInput, setBulkDeleteConfirmInput] = useState('');
+
   // Close drawer helpers & key listeners
   const handleDrawerBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) {
@@ -106,6 +114,8 @@ export default function InventoryView({
       if (e.key === 'Escape') {
         if (isDeleteModalOpen) {
           setIsDeleteModalOpen(false);
+        } else if (isBulkDeleteModalOpen) {
+          setIsBulkDeleteModalOpen(false);
         } else {
           setSelectedVariant(null);
           setIsDrawerOpen(false);
@@ -116,7 +126,7 @@ export default function InventoryView({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isDeleteModalOpen]);
+  }, [isDeleteModalOpen, isBulkDeleteModalOpen]);
 
   const handleDeleteConfirm = () => {
     if (deleteConfirmInput !== 'DELETE' || !selectedVariant) return;
@@ -132,6 +142,76 @@ export default function InventoryView({
         alert(res.error || 'Failed to delete SKU variant');
       }
     });
+  };
+
+  const handleRestoreSku = () => {
+    if (!selectedVariant) return;
+    startTransition(async () => {
+      const res = await restoreVariantAction(selectedVariant.variantId);
+      if (res.success) {
+        setSelectedVariant(null);
+        setIsDrawerOpen(false);
+        alert(res.message);
+      } else {
+        alert(res.error || 'Failed to restore SKU variant');
+      }
+    });
+  };
+
+  const handleBulkDeleteConfirm = () => {
+    if (bulkDeleteConfirmInput !== 'DELETE' || selectedVariantIds.length === 0) return;
+
+    startTransition(async () => {
+      const res = await bulkDeleteVariantsAction(selectedVariantIds);
+      if (res.success) {
+        setIsBulkDeleteModalOpen(false);
+        setSelectedVariantIds([]);
+        alert(res.message);
+      } else {
+        alert(res.error || 'Failed to delete selected SKUs');
+      }
+    });
+  };
+
+  const handleBulkRestore = () => {
+    if (selectedVariantIds.length === 0) return;
+
+    startTransition(async () => {
+      const res = await bulkRestoreVariantsAction(selectedVariantIds);
+      if (res.success) {
+        setSelectedVariantIds([]);
+        alert(res.message);
+      } else {
+        alert(res.error || 'Failed to restore selected SKUs');
+      }
+    });
+  };
+
+  const handleBulkExport = () => {
+    if (selectedVariantIds.length === 0) return;
+    const selectedItems = inventoryItems.filter((v: any) => selectedVariantIds.includes(v.variantId));
+    const exportData = selectedItems.map((item: any) => ({
+      'Barcode (PUK)': item.barcode,
+      'SKU / Code': item.sku,
+      'Product Name': item.productName,
+      'Category': item.category,
+      'Color': item.colorName,
+      'Size': item.sizeName,
+      'Ready Stock': item.readyStock,
+      'Repairable Stock': item.repairableStock,
+      'Scrap Stock': item.scrapStock,
+      'Cost Price': item.costPrice,
+      'Wholesale Price': item.wholesalePrice,
+      'MRP': item.mrp,
+      'Rack Location': item.rackLocation,
+      'Total Valuation': item.inventoryCostValue,
+      'Status': item.status
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Selected Inventory');
+    XLSX.writeFile(wb, `LJK_Selected_Inventory_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // Modal display states
@@ -205,6 +285,17 @@ export default function InventoryView({
 
   // Universal fast search: prioritizing exact Barcode, then fallback to SKU, product name, color, and size
   const filteredItems = inventoryItems.filter(item => {
+    // Soft-deleted check based on showDeleted toggle (SuperAdmin only)
+    if (isSuperAdmin) {
+      if (showDeleted) {
+        if (item.active) return false;
+      } else {
+        if (!item.active) return false;
+      }
+    } else {
+      if (!item.active) return false;
+    }
+
     const term = searchTerm.trim().toLowerCase();
     if (!term) {
       const matchesProduct = selectedProduct === '' || item.productId === selectedProduct;
@@ -732,22 +823,40 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
 
       {/* 2. Scanning Bar & Filters */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4 no-print">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div className="flex items-center gap-2 text-slate-800 font-bold text-xs uppercase tracking-wider">
             <SlidersHorizontal size={14} className="text-slate-600" />
             <span>Search Control Panel</span>
           </div>
 
-          {/* Scan Barcode Toggle Button */}
-          <button
-            onClick={() => setScanMode(!scanMode)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
-              scanMode ? 'bg-amber-500 border-amber-600 text-slate-900 shadow-inner' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <Scan size={14} />
-            <span>{scanMode ? 'Focus Scanner' : 'Simulate Scanner'}</span>
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Show Deleted SKUs Toggle for SuperAdmin only */}
+            {isSuperAdmin && (
+              <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showDeleted}
+                  onChange={(e) => {
+                    setShowDeleted(e.target.checked);
+                    setSelectedVariantIds([]); // Reset selection when view changes
+                  }}
+                  className="rounded border-slate-300 text-slate-800 focus:ring-slate-500 h-4 w-4 cursor-pointer"
+                />
+                <span>Show Deleted SKUs</span>
+              </label>
+            )}
+
+            {/* Scan Barcode Toggle Button */}
+            <button
+              onClick={() => setScanMode(!scanMode)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                scanMode ? 'bg-amber-500 border-amber-600 text-slate-900 shadow-inner' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Scan size={14} />
+              <span>{scanMode ? 'Focus Scanner' : 'Simulate Scanner'}</span>
+            </button>
+          </div>
         </div>
 
         {/* Scan Barcode Form */}
@@ -829,43 +938,85 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
       </div>
 
       {/* Bulk Operations Toolbar */}
-      {selectedVariantIds.length > 0 && (
-        <div className="bg-slate-800 text-white px-6 py-3.5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in shadow-md no-print">
+      {isSuperAdmin && selectedVariantIds.length > 0 && (
+        <div className="bg-slate-800 text-white px-6 py-4 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in shadow-md no-print">
           <div className="flex items-center gap-2">
-            <CheckSquare size={16} className="text-white" />
-            <span className="text-xs font-bold">Selected {selectedVariantIds.length} variant SKUs for bulk action</span>
+            <CheckSquare size={16} className="text-emerald-400 animate-pulse" />
+            <span className="text-xs font-bold font-mono">{selectedVariantIds.length} SKUs Selected</span>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5 font-sans">
             <button
               onClick={() => {
-                setBulkAction('STOCK_IN');
-                setIsBulkOpen(true);
+                setIsDrawerOpen(false);
+                setIsLabelStudioOpen(true);
               }}
-              className="bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              className="bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95 font-sans"
             >
-              Bulk Stock In
+              <Printer size={12} className="text-slate-800" />
+              <span>Print Labels</span>
             </button>
             <button
-              onClick={() => {
-                setBulkAction('SALE');
-                setIsBulkOpen(true);
-              }}
-              className="bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              onClick={handleBulkExport}
+              className="bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95 font-sans"
             >
-              Bulk Sale
+              <Download size={12} className="text-slate-500" />
+              <span>Export</span>
             </button>
-            <button
-              onClick={() => {
-                setBulkAction('DAMAGE_REPAIRABLE');
-                setIsBulkOpen(true);
-              }}
-              className="bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              Bulk Damage
-            </button>
+
+            {!showDeleted && (
+              <>
+                <button
+                  onClick={() => {
+                    setBulkAction('STOCK_IN');
+                    setIsBulkOpen(true);
+                  }}
+                  className="bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Bulk Stock In
+                </button>
+                <button
+                  onClick={() => {
+                    setBulkAction('SALE');
+                    setIsBulkOpen(true);
+                  }}
+                  className="bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Bulk Sale
+                </button>
+                <button
+                  onClick={() => {
+                    setBulkAction('DAMAGE_REPAIRABLE');
+                    setIsBulkOpen(true);
+                  }}
+                  className="bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Bulk Damage
+                </button>
+              </>
+            )}
+
+            {showDeleted ? (
+              <button
+                onClick={handleBulkRestore}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 shadow-sm active:scale-95"
+              >
+                <span>Restore Selected</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setBulkDeleteConfirmInput('');
+                  setIsBulkDeleteModalOpen(true);
+                }}
+                className="bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 shadow-sm active:scale-95"
+              >
+                <span>Delete Selected</span>
+              </button>
+            )}
+
             <button
               onClick={() => setSelectedVariantIds([])}
-              className="text-slate-400 hover:text-white text-xs font-semibold px-2 cursor-pointer"
+              className="text-slate-400 hover:text-white text-xs font-semibold px-2 cursor-pointer font-sans"
             >
               Clear
             </button>
@@ -879,15 +1030,17 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                <th className="px-6 py-4 w-12 text-center no-print">
-                  <button onClick={toggleSelectAll} className="text-slate-400 hover:text-slate-600 focus:outline-none">
-                    {selectedVariantIds.length === filteredItems.length && filteredItems.length > 0 ? (
-                      <CheckSquare size={14} className="text-slate-700" />
-                    ) : (
-                      <Square size={14} />
-                    )}
-                  </button>
-                </th>
+                {isSuperAdmin && (
+                  <th className="px-6 py-4 w-12 text-center no-print">
+                    <button onClick={toggleSelectAll} className="text-slate-400 hover:text-slate-600 focus:outline-none flex items-center justify-center w-full">
+                      {selectedVariantIds.length === filteredItems.length && filteredItems.length > 0 ? (
+                        <CheckSquare size={14} className="text-slate-700" />
+                      ) : (
+                        <Square size={14} />
+                      )}
+                    </button>
+                  </th>
+                )}
                 <th className="px-6 py-4">Barcode (PUK)</th>
                 <th className="px-6 py-4">SKU / Code</th>
                 <th className="px-6 py-4">Product Name</th>
@@ -925,22 +1078,33 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                         isSelected ? 'bg-slate-50/70' : ''
                       }`}
                     >
-                      <td className="px-6 py-3.5 text-center no-print" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => toggleSelectVariant(item.variantId)} className="text-slate-400 hover:text-slate-600 focus:outline-none">
-                          {isSelected ? (
-                            <CheckSquare size={14} className="text-slate-700" />
-                          ) : (
-                            <Square size={14} />
-                          )}
-                        </button>
-                      </td>
+                      {isSuperAdmin && (
+                        <td className="px-6 py-3.5 text-center no-print" onClick={(e) => e.stopPropagation()}>
+                          <button onClick={() => toggleSelectVariant(item.variantId)} className="text-slate-400 hover:text-slate-600 focus:outline-none flex items-center justify-center w-full">
+                            {isSelected ? (
+                              <CheckSquare size={14} className="text-slate-700" />
+                            ) : (
+                              <Square size={14} />
+                            )}
+                          </button>
+                        </td>
+                      )}
                       <td className="px-6 py-3.5 text-xs font-mono font-bold text-slate-600 tracking-wider">
                         <span className="inline-flex items-center gap-1">
                           <Scan size={10} className="text-slate-400" />
                           {item.barcode || 'N/A'}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5 text-xs font-extrabold text-slate-900 font-mono">{item.sku}</td>
+                      <td className="px-6 py-3.5 text-xs font-extrabold text-slate-900 font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <span>{item.sku}</span>
+                          {!item.active && (
+                            <span className="bg-red-100 text-red-700 text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0">
+                              Deleted
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-6 py-3.5 text-xs font-bold text-slate-800">{item.productName}</td>
                       <td className="px-6 py-3.5 text-center text-xs font-semibold text-slate-500">{item.colorName}</td>
                       <td className="px-6 py-3.5 text-center text-xs font-semibold text-slate-500">{item.sizeName}</td>
@@ -1132,15 +1296,24 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
               <span className="text-slate-400 font-semibold font-mono">Location: {selectedVariant.rackLocation}</span>
               <div className="flex gap-2">
                 {isSuperAdmin && (
-                  <button 
-                    onClick={() => {
-                      setDeleteConfirmInput('');
-                      setIsDeleteModalOpen(true);
-                    }}
-                    className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 px-4 py-2 rounded-xl font-bold cursor-pointer transition-colors"
-                  >
-                    Delete SKU
-                  </button>
+                  selectedVariant.active ? (
+                    <button 
+                      onClick={() => {
+                        setDeleteConfirmInput('');
+                        setIsDeleteModalOpen(true);
+                      }}
+                      className="bg-red-50 text-red-650 border border-red-200 hover:bg-red-100 px-4 py-2 rounded-xl font-bold cursor-pointer transition-colors"
+                    >
+                      Delete SKU
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={handleRestoreSku}
+                      className="bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 px-4 py-2 rounded-xl font-bold cursor-pointer transition-colors"
+                    >
+                      Restore SKU
+                    </button>
+                  )
                 )}
                 <button 
                   onClick={() => {
@@ -1770,6 +1943,67 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                 className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-xs font-black transition-all shadow-md shadow-red-100 cursor-pointer font-sans"
               >
                 Permanently Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Modal */}
+      {isBulkDeleteModalOpen && (
+        <div 
+          onClick={() => setIsBulkDeleteModalOpen(false)}
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 no-print"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full space-y-6 shadow-2xl animate-fade-in"
+          >
+            <div className="flex items-start gap-3 text-red-650 pb-2 border-b border-slate-100">
+              <AlertTriangle className="shrink-0 animate-pulse text-red-600" size={24} />
+              <div>
+                <h3 className="text-base font-black text-slate-900 leading-tight font-sans">Confirm Bulk SKU Deletion</h3>
+                <p className="text-[10px] font-semibold text-slate-400 mt-0.5">SuperAdmin Authorization Required</p>
+              </div>
+            </div>
+
+            <div className="text-slate-650 text-xs leading-relaxed space-y-2 font-sans font-medium">
+              <p className="font-bold text-slate-800">You are about to delete:</p>
+              <ul className="list-disc list-inside space-y-1 font-semibold text-slate-900">
+                <li>Total SKUs: {selectedVariantIds.length}</li>
+                <li>Total Stock Units: {inventoryItems.filter(item => selectedVariantIds.includes(item.variantId)).reduce((sum, item) => sum + item.readyStock + item.repairableStock + item.scrapStock, 0)}</li>
+              </ul>
+              <p className="text-[11px] text-slate-400 mt-2 font-medium">
+                This action will hide selected SKUs from inventory.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-[10px] font-black text-slate-400 uppercase">
+                Type <span className="font-mono text-red-500 font-extrabold select-all">DELETE</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={bulkDeleteConfirmInput}
+                onChange={(e) => setBulkDeleteConfirmInput(e.target.value)}
+                placeholder="Type DELETE..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 font-bold focus:outline-none focus:border-red-500 uppercase tracking-wider font-mono"
+              />
+            </div>
+
+            <div className="flex gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setIsBulkDeleteModalOpen(false)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer font-sans"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDeleteConfirm}
+                disabled={bulkDeleteConfirmInput !== 'DELETE'}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl text-xs font-black transition-all shadow-md shadow-red-100 cursor-pointer font-sans"
+              >
+                Delete Selected
               </button>
             </div>
           </div>

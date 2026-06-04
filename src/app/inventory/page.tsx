@@ -17,7 +17,8 @@ export default async function InventoryPage() {
   if (!user) {
     redirect('/login');
   }
-  const inventoryItems = await getComputedInventory();
+  const isSuperAdmin = user.role === 'SUPERADMIN';
+  const inventoryItems = await getComputedInventory(isSuperAdmin);
   const allProducts = await getProducts();
   
   const allTransactions = await getTransactions();
