@@ -10,7 +10,11 @@ import {
   deleteVariant,
   bulkDeleteVariants,
   restoreVariant,
-  bulkRestoreVariants
+  bulkRestoreVariants,
+  updateApprovalPolicy,
+  bulkReviewStockRequests,
+  getStockRequests,
+  approveAllPendingRequests
 } from '@/utils/db';
 import { getSession, authenticateUser, clearSession } from '@/utils/session';
 import { revalidatePath } from 'next/cache';
@@ -197,9 +201,17 @@ export async function createStockRequestAction(prevState: any, formData: FormDat
       return { success: false, error: result.error };
     }
 
-    // Auto-approve if created directly by SuperAdmin!
+    // Check if the request was auto-approved by the policy engine
+    if (result.autoApproved) {
+      revalidatePath('/');
+      revalidatePath('/inventory');
+      revalidatePath('/requests');
+      return { success: true, message: 'Stock request auto-approved per policy and posted to the immutable ledger!' };
+    }
+
+    // If SuperAdmin creates a request and it wasn't auto-approved, manually approve it
     if (user.role === 'SUPERADMIN' && result.request) {
-      await reviewStockRequest(result.request.id, 'APPROVED', user.id);
+      await reviewStockRequest(result.request.id, 'APPROVED', user.id, 'MANUAL');
       revalidatePath('/');
       revalidatePath('/inventory');
       revalidatePath('/requests');
@@ -427,3 +439,153 @@ export async function bulkRestoreVariantsAction(variantIds: string[]): Promise<{
   }
 }
 
+// -----------------------------------------------------------------------------
+// APPROVAL POLICY MANAGEMENT
+// -----------------------------------------------------------------------------
+export async function updateApprovalPolicyAction(
+  policyId: string,
+  data: { approvalMode: 'AUTO' | 'MANUAL' | 'THRESHOLD'; thresholdQuantity: number }
+): Promise<{ success: boolean; error?: string; message?: string }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can configure approval policies.' };
+  }
+
+  try {
+    const result = await updateApprovalPolicy(policyId, data, user.id);
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+    revalidatePath('/settings');
+    return { success: true, message: `Approval policy updated successfully!` };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update approval policy' };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// BULK REVIEW (APPROVE / REJECT)
+// -----------------------------------------------------------------------------
+export async function bulkReviewRequestsAction(
+  requestIds: string[],
+  status: 'APPROVED' | 'REJECTED'
+): Promise<{ success: boolean; error?: string; message?: string; successCount?: number; failedCount?: number }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can bulk approve/reject requests.' };
+  }
+
+  if (requestIds.length === 0) {
+    return { success: false, error: 'No requests selected.' };
+  }
+
+  try {
+    const result = await bulkReviewStockRequests(requestIds, status, user.id);
+    revalidatePath('/');
+    revalidatePath('/inventory');
+    revalidatePath('/requests');
+    revalidatePath('/reports');
+
+    if (result.failedCount > 0) {
+      return {
+        success: true,
+        message: `Bulk ${status.toLowerCase()}: ${result.successCount} succeeded, ${result.failedCount} failed.`,
+        successCount: result.successCount,
+        failedCount: result.failedCount
+      };
+    }
+
+    return {
+      success: true,
+      message: `Successfully ${status.toLowerCase()} ${result.successCount} request${result.successCount > 1 ? 's' : ''}!`,
+      successCount: result.successCount,
+      failedCount: 0
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Bulk operation failed' };
+  }
+}
+
+// Approve all pending requests
+export async function approveAllPendingAction(): Promise<{ success: boolean; error?: string; message?: string; successCount?: number; failedCount?: number }> {
+  const user = await getSession();
+  if (!user || user.role !== 'SUPERADMIN') {
+    return { success: false, error: 'Access Denied! Only SuperAdmins can approve all requests.' };
+  }
+
+  try {
+    const result = await approveAllPendingRequests(user.id);
+    revalidatePath('/');
+    revalidatePath('/inventory');
+    revalidatePath('/requests');
+    revalidatePath('/reports');
+
+    if (result.errors.length > 0 && result.successCount === 0) {
+      return {
+        success: false,
+        error: `Failed to approve requests: ${result.errors.join('; ')}`,
+        successCount: 0,
+        failedCount: result.failedCount
+      };
+    }
+
+    let msg = `Successfully approved all ${result.successCount} pending request${result.successCount !== 1 ? 's' : ''}!`;
+    if (result.failedCount > 0) {
+      msg += ` (${result.failedCount} request(s) skipped due to insufficient stock).`;
+    }
+
+    return {
+      success: true,
+      message: msg,
+      successCount: result.successCount,
+      failedCount: result.failedCount
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Approve all pending action failed.' };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// EXPORT SELECTED REQUESTS
+// -----------------------------------------------------------------------------
+export async function exportSelectedRequestsAction(
+  requestIds: string[]
+): Promise<{ success: boolean; error?: string; data?: any[] }> {
+  const user = await getSession();
+  if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ACCOUNTS')) {
+    return { success: false, error: 'Access Denied! Insufficient permissions for export.' };
+  }
+
+  if (requestIds.length === 0) {
+    return { success: false, error: 'No requests selected.' };
+  }
+
+  try {
+    const allRequests = await getStockRequests();
+    const selectedRequests = allRequests.filter(r => requestIds.includes(r.id));
+
+    const exportData = selectedRequests.map(r => ({
+      requestId: r.id,
+      transactionType: r.requestType,
+      quantity: r.quantity,
+      status: r.status,
+      approvalMethod: r.approvalMethod || 'N/A',
+      referenceNumber: r.referenceNumber || 'N/A',
+      invoiceNumber: r.invoiceNumber || 'N/A',
+      remarks: r.remarks || '',
+      createdAt: r.createdAt,
+      reviewedAt: r.reviewedAt || 'N/A'
+    }));
+
+    await logAudit(
+      user.id,
+      'EXPORT_REQUESTS',
+      'STOCK_REQUESTS',
+      `Exported ${selectedRequests.length} stock requests`
+    );
+
+    return { success: true, data: exportData };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Export failed' };
+  }
+}

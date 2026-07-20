@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import DashboardApproveAll from '@/components/DashboardApproveAll';
 
 export const revalidate = 0; // live reload stock calculations
 
@@ -115,18 +116,10 @@ export default async function DashboardPage() {
         <section className="space-y-4 mb-8">
           <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">Tally Operations & Approvals</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Link 
-              href="/requests"
-              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between hover:border-slate-300 transition-colors"
-            >
-              <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Requests</span>
-                <span className={`text-xl font-black mt-1 block ${stats.pendingRequestsCount > 0 ? 'text-amber-600 animate-pulse' : 'text-slate-900'}`}>
-                  {stats.pendingRequestsCount}
-                </span>
-              </div>
-              <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-100"><AlertTriangle size={16} /></div>
-            </Link>
+            <DashboardApproveAll 
+              pendingCount={stats.pendingRequestsCount} 
+              isSuperAdmin={user.role === 'SUPERADMIN'} 
+            />
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between">
               <div>

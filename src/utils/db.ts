@@ -15,6 +15,7 @@ import {
   StockTransaction, 
   PriceHistory, 
   AuditLog,
+  ApprovalPolicy,
   compileStockForVariant,
   ComputedStock
 } from './types';
@@ -219,8 +220,11 @@ export async function getStockRequests(): Promise<StockRequest[]> {
     remarks: r.remarks || undefined,
     createdBy: r.createdBy,
     status: r.status as any,
+    approvalMethod: r.approvalMethod || undefined,
     reviewedBy: r.reviewedBy || undefined,
     reviewedAt: r.reviewedAt?.toISOString() || undefined,
+    approvedBy: r.approvedBy || undefined,
+    approvedAt: r.approvedAt?.toISOString() || undefined,
     createdAt: r.createdAt.toISOString()
   }));
 }
@@ -228,7 +232,7 @@ export async function getStockRequests(): Promise<StockRequest[]> {
 export async function createStockRequest(
   data: Omit<StockRequest, 'id' | 'createdAt' | 'status' | 'createdBy'>,
   userId: string
-): Promise<{ success: boolean; error?: string; request?: StockRequest }> {
+): Promise<{ success: boolean; error?: string; request?: StockRequest; autoApproved?: boolean }> {
   // 1. Fetch variant and calculate live stock from transactions
   const varRes = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.id, data.variantId)).limit(1);
   if (varRes.length === 0) return { success: false, error: 'SKU variant not found' };
@@ -287,23 +291,66 @@ export async function createStockRequest(
     remarks: r.remarks || undefined,
     createdBy: r.createdBy,
     status: r.status as any,
+    approvalMethod: r.approvalMethod || undefined,
     createdAt: r.createdAt.toISOString()
   };
 
   await logAudit(
     userId,
     'REQUEST_CREATE',
-    'STOCK_REQUESTS',
+    'INVENTORY',
     `Created ${data.requestType} request for ${qty} units of SKU "${variant.sku}"`
   );
 
-  return { success: true, request: newReq };
+  // 2. Check approval policy for auto-approval
+  const shouldAutoApprove = await checkAutoApproval(data.requestType, qty);
+  if (shouldAutoApprove) {
+    // Auto-approve: insert ledger transaction, update request status, log audit
+    try {
+      await pgDb.insert(schema.stockTransactions).values({
+        requestId: r.id,
+        variantId: r.variantId,
+        transactionType: r.requestType as any,
+        quantity: qty,
+        referenceNumber: r.referenceNumber || null,
+        invoiceNumber: r.invoiceNumber || null,
+        remarks: r.remarks || null,
+        createdBy: r.createdBy
+      });
+
+      await pgDb.update(schema.stockRequests).set({
+        status: 'APPROVED' as any,
+        approvalMethod: 'AUTO',
+        reviewedBy: userId,
+        reviewedAt: new Date(),
+        approvedBy: userId,
+        approvedAt: new Date()
+      }).where(eq(schema.stockRequests.id, r.id));
+
+      const profile = await getProfileById(userId);
+      const username = profile ? profile.fullName : 'System';
+      const auditDesc = `Entity: stock_requests | Entity ID: ${r.id} | Username: ${username} | Description: Auto-approved ${data.requestType} request for ${qty} units of SKU "${variant.sku}" per approval policy`;
+      
+      await logAudit(userId, 'AUTO_APPROVED', 'INVENTORY', auditDesc);
+
+      newReq.status = 'APPROVED';
+      newReq.approvalMethod = 'AUTO';
+      newReq.approvedBy = userId;
+      newReq.approvedAt = new Date().toISOString();
+      return { success: true, request: newReq, autoApproved: true };
+    } catch (err: any) {
+      console.error('Auto-approval failed, keeping request as PENDING:', err.message);
+    }
+  }
+
+  return { success: true, request: newReq, autoApproved: false };
 }
 
 export async function reviewStockRequest(
   requestId: string,
   status: 'APPROVED' | 'REJECTED',
-  userId: string
+  userId: string,
+  approvalMethod: 'MANUAL' | 'BULK' = 'MANUAL'
 ): Promise<{ success: boolean; error?: string; request?: StockRequest }> {
   const reqRes = await pgDb.select().from(schema.stockRequests).where(eq(schema.stockRequests.id, requestId)).limit(1);
   if (reqRes.length === 0) return { success: false, error: 'Stock request not found.' };
@@ -356,11 +403,14 @@ export async function reviewStockRequest(
       });
     }
 
-    // Update request review fields
+    // Update request review fields with approval method
     updatedRes = await pgDb.update(schema.stockRequests).set({
       status: status as any,
+      approvalMethod: approvalMethod,
       reviewedBy: userId,
-      reviewedAt: new Date()
+      reviewedAt: new Date(),
+      approvedBy: userId,
+      approvedAt: new Date()
     }).where(eq(schema.stockRequests.id, requestId)).returning();
   } catch (err: any) {
     return handleDatabaseError(err, 'reviewStockRequest');
@@ -377,17 +427,23 @@ export async function reviewStockRequest(
     remarks: r.remarks || undefined,
     createdBy: r.createdBy,
     status: r.status as any,
+    approvalMethod: r.approvalMethod || undefined,
     reviewedBy: r.reviewedBy || undefined,
     reviewedAt: r.reviewedAt?.toISOString() || undefined,
+    approvedBy: r.approvedBy || undefined,
+    approvedAt: r.approvedAt?.toISOString() || undefined,
     createdAt: r.createdAt.toISOString()
   };
 
-  await logAudit(
-    userId,
-    status === 'APPROVED' ? 'REQUEST_APPROVE' : 'REQUEST_REJECT',
-    'STOCK_REQUESTS',
-    `${status} ${req.requestType} request for ${req.quantity} units of SKU "${variant.sku}"`
-  );
+  const actionType = status === 'APPROVED' 
+    ? (approvalMethod === 'BULK' ? 'BULK_APPROVED' : 'MANUALLY_APPROVED')
+    : 'REJECTED';
+
+  const profile = await getProfileById(userId);
+  const username = profile ? profile.fullName : 'System';
+  const auditDesc = `Entity: stock_requests | Entity ID: ${req.id} | Username: ${username} | Description: Reviewed ${req.requestType} request for ${req.quantity} units of SKU "${variant.sku}" -> ${status}`;
+
+  await logAudit(userId, actionType, 'INVENTORY', auditDesc);
 
   return { success: true, request: updatedReq };
 }
@@ -730,6 +786,241 @@ export async function bulkRestoreVariants(variantIds: string[], userId: string):
   );
 
   return true;
+}
+
+// -----------------------------------------------------------------------------
+// APPROVAL POLICY ENGINE
+// -----------------------------------------------------------------------------
+
+// Fetch all approval policies
+export async function getApprovalPolicies(): Promise<ApprovalPolicy[]> {
+  const res = await pgDb.select().from(schema.approvalPolicies).orderBy(schema.approvalPolicies.transactionKey);
+  return res.map((p: any) => ({
+    id: p.id,
+    transactionKey: p.transactionKey,
+    displayName: p.displayName,
+    approvalMode: p.approvalMode as 'AUTO' | 'MANUAL' | 'THRESHOLD',
+    thresholdQuantity: p.thresholdQuantity || 0,
+    updatedBy: p.updatedBy || undefined,
+    updatedAt: p.updatedAt?.toISOString() || undefined,
+    createdAt: p.createdAt.toISOString()
+  }));
+}
+
+// Fetch a single approval policy by transaction key
+export async function getApprovalPolicy(transactionKey: string): Promise<ApprovalPolicy | null> {
+  const res = await pgDb.select().from(schema.approvalPolicies)
+    .where(eq(schema.approvalPolicies.transactionKey, transactionKey)).limit(1);
+  if (res.length === 0) return null;
+  const p = res[0];
+  return {
+    id: p.id,
+    transactionKey: p.transactionKey,
+    displayName: p.displayName,
+    approvalMode: p.approvalMode as 'AUTO' | 'MANUAL' | 'THRESHOLD',
+    thresholdQuantity: p.thresholdQuantity || 0,
+    updatedBy: p.updatedBy || undefined,
+    updatedAt: p.updatedAt?.toISOString() || undefined,
+    createdAt: p.createdAt.toISOString()
+  };
+}
+
+// Update an approval policy
+export async function updateApprovalPolicy(
+  policyId: string,
+  data: {
+    approvalMode: 'AUTO' | 'MANUAL' | 'THRESHOLD';
+    thresholdQuantity: number;
+  },
+  userId: string
+): Promise<{ success: boolean; error?: string; policy?: ApprovalPolicy }> {
+  const existing = await pgDb.select().from(schema.approvalPolicies)
+    .where(eq(schema.approvalPolicies.id, policyId)).limit(1);
+  if (existing.length === 0) return { success: false, error: 'Approval policy not found.' };
+
+  const policy = existing[0];
+
+  try {
+    const updatedRes = await pgDb.update(schema.approvalPolicies).set({
+      approvalMode: data.approvalMode,
+      thresholdQuantity: data.thresholdQuantity,
+      updatedBy: userId,
+      updatedAt: new Date()
+    }).where(eq(schema.approvalPolicies.id, policyId)).returning();
+
+    const p = updatedRes[0];
+
+    await logAudit(
+      userId,
+      'POLICY_UPDATE',
+      'INVENTORY',
+      `Updated approval policy for "${policy.displayName}": mode=${data.approvalMode}, threshold=${data.approvalMode === 'THRESHOLD' ? data.thresholdQuantity : 'disabled'}`
+    );
+
+    return {
+      success: true,
+      policy: {
+        id: p.id,
+        transactionKey: p.transactionKey,
+        displayName: p.displayName,
+        approvalMode: p.approvalMode as 'AUTO' | 'MANUAL' | 'THRESHOLD',
+        thresholdQuantity: p.thresholdQuantity || 0,
+        updatedBy: p.updatedBy || undefined,
+        updatedAt: p.updatedAt?.toISOString() || undefined,
+        createdAt: p.createdAt.toISOString()
+      }
+    };
+  } catch (err: any) {
+    return handleDatabaseError(err, 'updateApprovalPolicy');
+  }
+}
+
+// Check if a transaction type should be auto-approved
+export async function checkAutoApproval(requestType: string, quantity: number): Promise<boolean> {
+  const policy = await getApprovalPolicy(requestType);
+  if (!policy) return false;
+
+  if (policy.approvalMode === 'AUTO') {
+    return true;
+  }
+
+  if (policy.approvalMode === 'THRESHOLD') {
+    return quantity <= policy.thresholdQuantity;
+  }
+
+  return false;
+}
+
+// Bulk review (approve/reject) multiple stock requests
+export async function bulkReviewStockRequests(
+  requestIds: string[],
+  status: 'APPROVED' | 'REJECTED',
+  userId: string
+): Promise<{ success: boolean; successCount: number; failedCount: number; errors: string[] }> {
+  let successCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
+
+  for (const reqId of requestIds) {
+    const result = await reviewStockRequest(reqId, status, userId, 'BULK');
+    if (result.success) {
+      successCount++;
+    } else {
+      failedCount++;
+      errors.push(`Request ${reqId.slice(0, 8)}...: ${result.error}`);
+    }
+  }
+
+  await logAudit(
+    userId,
+    status === 'APPROVED' ? 'BULK_APPROVE' : 'BULK_REJECT',
+    'INVENTORY',
+    `Bulk ${status.toLowerCase()} ${successCount} requests (${failedCount} failed) out of ${requestIds.length} selected`
+  );
+
+  return { success: successCount > 0, successCount, failedCount, errors };
+}
+
+// Approve all pending requests inside a database transaction
+export async function approveAllPendingRequests(
+  userId: string
+): Promise<{ success: boolean; successCount: number; failedCount: number; errors: string[] }> {
+  let successCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
+
+  try {
+    await pgDb.transaction(async (tx: any) => {
+      const pendings = await tx.select().from(schema.stockRequests)
+        .where(eq(schema.stockRequests.status, 'PENDING' as any));
+
+      if (pendings.length === 0) return;
+
+      const allTxRes = await tx.select().from(schema.stockTransactions);
+      const transactions = allTxRes.map((t: any) => ({
+        id: t.id,
+        requestId: t.requestId,
+        variantId: t.variantId,
+        transactionType: t.transactionType as any,
+        quantity: t.quantity,
+        referenceNumber: t.referenceNumber || undefined,
+        invoiceNumber: t.invoiceNumber || undefined,
+        remarks: t.remarks || undefined,
+        createdBy: t.createdBy,
+        createdAt: t.createdAt.toISOString()
+      }));
+
+      const localStockCache: Record<string, number> = {};
+      const getCachedReadyStock = (variantId: string) => {
+        if (localStockCache[variantId] === undefined) {
+          const comp = compileStockForVariant(variantId, transactions);
+          localStockCache[variantId] = comp.readyStock;
+        }
+        return localStockCache[variantId];
+      };
+
+      for (const req of pendings) {
+        const qty = Number(req.quantity);
+        const outTypes = ['SALE', 'DAMAGE_REPAIRABLE', 'DAMAGE_NON_REPAIRABLE', 'ADJUSTMENT_OUT'];
+
+        if (outTypes.includes(req.requestType as any)) {
+          const readyStock = getCachedReadyStock(req.variantId);
+          if (readyStock < qty) {
+            failedCount++;
+            errors.push(`Request ${req.id.slice(0, 8)}...: Insufficient stock (Needed ${qty}, available ${readyStock})`);
+            continue;
+          }
+          localStockCache[req.variantId] -= qty;
+        }
+
+        // Valid request: post transaction
+        await tx.insert(schema.stockTransactions).values({
+          requestId: req.id,
+          variantId: req.variantId,
+          transactionType: req.requestType as any,
+          quantity: qty,
+          referenceNumber: req.referenceNumber || null,
+          invoiceNumber: req.invoiceNumber || null,
+          remarks: req.remarks || null,
+          createdBy: req.createdBy
+        });
+
+        // Update request status
+        await tx.update(schema.stockRequests).set({
+          status: 'APPROVED' as any,
+          approvalMethod: 'BULK',
+          reviewedBy: userId,
+          reviewedAt: new Date(),
+          approvedBy: userId,
+          approvedAt: new Date()
+        }).where(eq(schema.stockRequests.id, req.id));
+
+        const profile = await getProfileById(userId);
+        const username = profile ? profile.fullName : 'System';
+
+        const skuRes = await tx.select({ sku: schema.productVariants.sku })
+          .from(schema.productVariants)
+          .where(eq(schema.productVariants.id, req.variantId)).limit(1);
+        const skuStr = skuRes[0]?.sku || 'Unknown SKU';
+
+        const auditDesc = `Entity: stock_requests | Entity ID: ${req.id} | Username: ${username} | Description: Bulk-approved ${req.requestType} request for ${req.quantity} units of SKU "${skuStr}" via Approve All`;
+
+        await tx.insert(schema.auditLogs).values({
+          userId: userId.startsWith('usr-') ? null : userId,
+          action: 'BULK_APPROVED',
+          module: 'INVENTORY',
+          description: auditDesc
+        });
+
+        successCount++;
+      }
+    });
+
+    return { success: successCount > 0, successCount, failedCount, errors };
+  } catch (err: any) {
+    console.error('Approve all pending transaction failed:', err.message);
+    return { success: false, successCount: 0, failedCount: 0, errors: [err.message || 'Transaction aborted'] };
+  }
 }
 
 

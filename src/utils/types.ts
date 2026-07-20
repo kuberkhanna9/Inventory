@@ -55,8 +55,11 @@ export interface StockRequest {
   remarks?: string;
   createdBy: string; // references Profile.id
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approvalMethod?: 'AUTO' | 'MANUAL' | 'BULK' | null;
   reviewedBy?: string; // references Profile.id
   reviewedAt?: string;
+  approvedBy?: string; // references Profile.id
+  approvedAt?: string;
   createdAt: string;
 }
 
@@ -92,6 +95,17 @@ export interface AuditLog {
   action: string;
   module: string;
   description: string;
+  createdAt: string;
+}
+
+export interface ApprovalPolicy {
+  id: string;
+  transactionKey: string;
+  displayName: string;
+  approvalMode: 'AUTO' | 'MANUAL' | 'THRESHOLD';
+  thresholdQuantity: number;
+  updatedBy?: string;
+  updatedAt?: string;
   createdAt: string;
 }
 

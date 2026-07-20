@@ -75,8 +75,11 @@ export const stockRequests = pgTable('stock_requests', {
   remarks: varchar('remarks', { length: 500 }),
   createdBy: uuid('created_by').references(() => profiles.id).notNull(),
   status: requestStatusEnum('status').default('PENDING').notNull(),
+  approvalMethod: varchar('approval_method', { length: 20 }),
   reviewedBy: uuid('reviewed_by').references(() => profiles.id),
   reviewedAt: timestamp('reviewed_at'),
+  approvedBy: uuid('approved_by').references(() => profiles.id),
+  approvedAt: timestamp('approved_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -115,6 +118,18 @@ export const auditLogs = pgTable('audit_logs', {
   action: varchar('action', { length: 255 }).notNull(),
   module: varchar('module', { length: 100 }).notNull(),
   description: varchar('description', { length: 1000 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 10. APPROVAL_POLICIES Table
+export const approvalPolicies = pgTable('approval_policies', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  transactionKey: varchar('transaction_key', { length: 100 }).unique().notNull(),
+  displayName: varchar('display_name', { length: 255 }).notNull(),
+  approvalMode: varchar('approval_mode', { length: 20 }).default('MANUAL').notNull(), // AUTO, MANUAL, THRESHOLD
+  thresholdQuantity: integer('threshold_quantity').default(0),
+  updatedBy: uuid('updated_by').references(() => profiles.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -163,4 +178,11 @@ export const productVariantsRelations = relations(productVariants, ({ one, many 
   requests: many(stockRequests),
   transactions: many(stockTransactions),
   priceHistories: many(priceHistory),
+}));
+
+export const approvalPoliciesRelations = relations(approvalPolicies, ({ one }) => ({
+  updater: one(profiles, {
+    fields: [approvalPolicies.updatedBy],
+    references: [profiles.id],
+  }),
 }));

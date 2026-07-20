@@ -36,8 +36,8 @@ export default function Navigation({ user }: NavigationProps) {
     { name: 'Inventory Sheet', href: '/inventory', icon: Package },
   ];
 
-  // Stock Requests: Visible only to SuperAdmin and Inventory Department
-  if (user.role === 'SUPERADMIN' || user.role === 'INVENTORY') {
+  // Stock Requests: Visible to SuperAdmin, Inventory, and Accounts (view-only)
+  if (user.role === 'SUPERADMIN' || user.role === 'INVENTORY' || user.role === 'ACCOUNTS') {
     links.push({ name: 'Stock Requests', href: '/requests', icon: GitPullRequest });
   }
 

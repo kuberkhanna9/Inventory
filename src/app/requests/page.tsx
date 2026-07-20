@@ -24,7 +24,8 @@ export default async function RequestsPage() {
     };
   });
 
-  if (user.role !== 'SUPERADMIN' && user.role !== 'INVENTORY') {
+  // Allow SUPERADMIN, INVENTORY, and ACCOUNTS (view-only) to access this page
+  if (user.role !== 'SUPERADMIN' && user.role !== 'INVENTORY' && user.role !== 'ACCOUNTS') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col lg:flex-row">
         <Navigation user={user} />
