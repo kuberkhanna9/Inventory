@@ -278,6 +278,7 @@ export default function InventoryView({
   const isAccounts = userRole === 'ACCOUNTS';
   const isInventory = userRole === 'INVENTORY';
   const isSuperAdmin = userRole === 'SUPERADMIN';
+  const canUseBulk = isSuperAdmin || isInventory;
 
   // Scanner autofocus effect
   useEffect(() => {
@@ -960,7 +961,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
       </div>
 
       {/* Bulk Operations Toolbar */}
-      {isSuperAdmin && selectedVariantIds.length > 0 && (
+      {canUseBulk && selectedVariantIds.length > 0 && (
         <div className="bg-slate-800 text-white px-6 py-4 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in shadow-md no-print">
           <div className="flex items-center gap-2">
             <CheckSquare size={16} className="text-emerald-400 animate-pulse" />
@@ -1052,7 +1053,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                {isSuperAdmin && (
+                {canUseBulk && (
                   <th className="px-6 py-4 w-12 text-center no-print">
                     <button onClick={toggleSelectAll} className="text-slate-400 hover:text-slate-600 focus:outline-none flex items-center justify-center w-full">
                       {selectedVariantIds.length === filteredItems.length && filteredItems.length > 0 ? (
@@ -1100,7 +1101,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                         isSelected ? 'bg-slate-50/70' : ''
                       }`}
                     >
-                      {isSuperAdmin && (
+                      {canUseBulk && (
                         <td className="px-6 py-3.5 text-center no-print" onClick={(e) => e.stopPropagation()}>
                           <button onClick={() => toggleSelectVariant(item.variantId)} className="text-slate-400 hover:text-slate-600 focus:outline-none flex items-center justify-center w-full">
                             {isSelected ? (
