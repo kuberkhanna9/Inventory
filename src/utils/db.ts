@@ -225,18 +225,52 @@ export async function getStockRequests(): Promise<StockRequest[]> {
     reviewedAt: r.reviewedAt?.toISOString() || undefined,
     approvedBy: r.approvedBy || undefined,
     approvedAt: r.approvedAt?.toISOString() || undefined,
+    originalWsp: r.originalWsp ? Number(r.originalWsp) : undefined,
+    originalMrp: r.originalMrp ? Number(r.originalMrp) : undefined,
+    requestedWsp: r.requestedWsp ? Number(r.requestedWsp) : undefined,
+    requestedMrp: r.requestedMrp ? Number(r.requestedMrp) : undefined,
+    priceChangeStatus: r.priceChangeStatus as any,
     createdAt: r.createdAt.toISOString()
   }));
 }
 
 export async function createStockRequest(
-  data: Omit<StockRequest, 'id' | 'createdAt' | 'status' | 'createdBy'>,
+  data: Omit<StockRequest, 'id' | 'createdAt' | 'status' | 'createdBy'> & {
+    originalWsp?: number;
+    originalMrp?: number;
+    requestedWsp?: number;
+    requestedMrp?: number;
+    priceChangeStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+  },
   userId: string
 ): Promise<{ success: boolean; error?: string; request?: StockRequest; autoApproved?: boolean }> {
   // 1. Fetch variant and calculate live stock from transactions
   const varRes = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.id, data.variantId)).limit(1);
   if (varRes.length === 0) return { success: false, error: 'SKU variant not found' };
   const variant = varRes[0];
+
+  const profile = await getProfileById(userId);
+  const isSuperAdmin = profile ? profile.role === 'SUPERADMIN' : false;
+
+  const qty = Number(data.quantity);
+  if (qty <= 0) return { success: false, error: 'Quantity must be greater than zero.' };
+
+  // Validate custom pricing if provided
+  const hasPriceChange = 
+    (data.requestedWsp !== undefined && Number(data.requestedWsp) !== Number(variant.wholesalePrice)) ||
+    (data.requestedMrp !== undefined && Number(data.requestedMrp) !== Number(variant.mrp));
+
+  if (hasPriceChange) {
+    if (data.requestedWsp !== undefined && Number(data.requestedWsp) < 0) {
+      return { success: false, error: 'Wholesale Price (WSP) cannot be negative.' };
+    }
+    if (data.requestedMrp !== undefined && data.requestedWsp !== undefined && Number(data.requestedMrp) < Number(data.requestedWsp)) {
+      return { success: false, error: 'MRP cannot be less than Wholesale Price (WSP).' };
+    }
+    if (!data.remarks || data.remarks.trim() === '') {
+      return { success: false, error: 'Remarks are mandatory when WSP or MRP is modified.' };
+    }
+  }
 
   const allTxRes = await pgDb.select().from(schema.stockTransactions);
   const transactions = allTxRes.map((t: any) => ({
@@ -253,7 +287,6 @@ export async function createStockRequest(
   }));
 
   const currentStock = compileStockForVariant(data.variantId, transactions);
-  const qty = Number(data.quantity);
   const outTypes = ['SALE', 'DAMAGE_REPAIRABLE', 'DAMAGE_NON_REPAIRABLE', 'ADJUSTMENT_OUT'];
   
   if (outTypes.includes(data.requestType)) {
@@ -265,6 +298,10 @@ export async function createStockRequest(
     }
   }
 
+  // Determine initial status: Non-SuperAdmin rate change goes to PENDING_RATE_APPROVAL
+  const statusVal = (hasPriceChange && !isSuperAdmin) ? 'PENDING_RATE_APPROVAL' : 'PENDING';
+  const priceChangeStatusVal = hasPriceChange ? 'PENDING' : null;
+
   let res;
   try {
     res = await pgDb.insert(schema.stockRequests).values({
@@ -274,7 +311,13 @@ export async function createStockRequest(
       referenceNumber: data.referenceNumber || null,
       invoiceNumber: data.invoiceNumber || null,
       remarks: data.remarks || null,
-      createdBy: userId
+      createdBy: userId,
+      status: statusVal as any,
+      originalWsp: hasPriceChange ? String(variant.wholesalePrice) : null,
+      originalMrp: hasPriceChange ? String(variant.mrp) : null,
+      requestedWsp: hasPriceChange ? String(data.requestedWsp) : null,
+      requestedMrp: hasPriceChange ? String(data.requestedMrp) : null,
+      priceChangeStatus: priceChangeStatusVal
     }).returning();
   } catch (err: any) {
     return handleDatabaseError(err, 'createStockRequest');
@@ -291,9 +334,22 @@ export async function createStockRequest(
     remarks: r.remarks || undefined,
     createdBy: r.createdBy,
     status: r.status as any,
+    originalWsp: r.originalWsp ? Number(r.originalWsp) : undefined,
+    originalMrp: r.originalMrp ? Number(r.originalMrp) : undefined,
+    requestedWsp: r.requestedWsp ? Number(r.requestedWsp) : undefined,
+    requestedMrp: r.requestedMrp ? Number(r.requestedMrp) : undefined,
+    priceChangeStatus: r.priceChangeStatus as any,
     approvalMethod: r.approvalMethod || undefined,
     createdAt: r.createdAt.toISOString()
   };
+
+  const username = profile ? profile.fullName : 'System';
+
+  if (hasPriceChange) {
+    // Generate audit log for price modification
+    const auditDesc = `Price Modification: SKU "${variant.sku}" WSP: ${variant.wholesalePrice} -> ${data.requestedWsp}, MRP: ${variant.mrp} -> ${data.requestedMrp} by ${username}. Status: ${statusVal}`;
+    await logAudit(userId, 'PRICE_MODIFY', 'INVENTORY', auditDesc);
+  }
 
   await logAudit(
     userId,
@@ -302,44 +358,82 @@ export async function createStockRequest(
     `Created ${data.requestType} request for ${qty} units of SKU "${variant.sku}"`
   );
 
-  // 2. Check approval policy for auto-approval
-  const shouldAutoApprove = await checkAutoApproval(data.requestType, qty);
-  if (shouldAutoApprove) {
-    // Auto-approve: insert ledger transaction, update request status, log audit
-    try {
-      await pgDb.insert(schema.stockTransactions).values({
-        requestId: r.id,
-        variantId: r.variantId,
-        transactionType: r.requestType as any,
-        quantity: qty,
-        referenceNumber: r.referenceNumber || null,
-        invoiceNumber: r.invoiceNumber || null,
-        remarks: r.remarks || null,
-        createdBy: r.createdBy
-      });
+  // 2. Check approval policy for auto-approval (Only if not pending rate approval!)
+  if (statusVal !== 'PENDING_RATE_APPROVAL') {
+    // If SuperAdmin and hasPriceChange, immediately approve
+    if (isSuperAdmin && hasPriceChange) {
+      try {
+        await pgDb.insert(schema.stockTransactions).values({
+          requestId: r.id,
+          variantId: r.variantId,
+          transactionType: r.requestType as any,
+          quantity: qty,
+          referenceNumber: r.referenceNumber || null,
+          invoiceNumber: r.invoiceNumber || null,
+          remarks: r.remarks || null,
+          createdBy: r.createdBy
+        });
 
-      await pgDb.update(schema.stockRequests).set({
-        status: 'APPROVED' as any,
-        approvalMethod: 'AUTO',
-        reviewedBy: userId,
-        reviewedAt: new Date(),
-        approvedBy: userId,
-        approvedAt: new Date()
-      }).where(eq(schema.stockRequests.id, r.id));
+        await pgDb.update(schema.stockRequests).set({
+          status: 'APPROVED' as any,
+          priceChangeStatus: 'APPROVED',
+          approvalMethod: 'MANUAL',
+          reviewedBy: userId,
+          reviewedAt: new Date(),
+          approvedBy: userId,
+          approvedAt: new Date()
+        }).where(eq(schema.stockRequests.id, r.id));
 
-      const profile = await getProfileById(userId);
-      const username = profile ? profile.fullName : 'System';
-      const auditDesc = `Entity: stock_requests | Entity ID: ${r.id} | Username: ${username} | Description: Auto-approved ${data.requestType} request for ${qty} units of SKU "${variant.sku}" per approval policy`;
-      
-      await logAudit(userId, 'AUTO_APPROVED', 'INVENTORY', auditDesc);
+        const auditDesc = `Entity: stock_requests | Entity ID: ${r.id} | Username: ${username} | Description: SuperAdmin created request with rate change, auto-approved.`;
+        await logAudit(userId, 'MANUALLY_APPROVED', 'INVENTORY', auditDesc);
 
-      newReq.status = 'APPROVED';
-      newReq.approvalMethod = 'AUTO';
-      newReq.approvedBy = userId;
-      newReq.approvedAt = new Date().toISOString();
-      return { success: true, request: newReq, autoApproved: true };
-    } catch (err: any) {
-      console.error('Auto-approval failed, keeping request as PENDING:', err.message);
+        newReq.status = 'APPROVED';
+        newReq.priceChangeStatus = 'APPROVED';
+        newReq.approvalMethod = 'MANUAL';
+        newReq.approvedBy = userId;
+        newReq.approvedAt = new Date().toISOString();
+        return { success: true, request: newReq, autoApproved: true };
+      } catch (err: any) {
+        console.error('SuperAdmin immediate rate-change approval failed:', err.message);
+      }
+    }
+
+    const shouldAutoApprove = await checkAutoApproval(data.requestType, qty);
+    if (shouldAutoApprove) {
+      // Auto-approve: insert ledger transaction, update request status, log audit
+      try {
+        await pgDb.insert(schema.stockTransactions).values({
+          requestId: r.id,
+          variantId: r.variantId,
+          transactionType: r.requestType as any,
+          quantity: qty,
+          referenceNumber: r.referenceNumber || null,
+          invoiceNumber: r.invoiceNumber || null,
+          remarks: r.remarks || null,
+          createdBy: r.createdBy
+        });
+
+        await pgDb.update(schema.stockRequests).set({
+          status: 'APPROVED' as any,
+          approvalMethod: 'AUTO',
+          reviewedBy: userId,
+          reviewedAt: new Date(),
+          approvedBy: userId,
+          approvedAt: new Date()
+        }).where(eq(schema.stockRequests.id, r.id));
+
+        const auditDesc = `Entity: stock_requests | Entity ID: ${r.id} | Username: ${username} | Description: Auto-approved ${data.requestType} request for ${qty} units of SKU "${variant.sku}" per approval policy`;
+        
+        await logAudit(userId, 'AUTO_APPROVED', 'INVENTORY', auditDesc);
+
+        newReq.status = 'APPROVED';
+        newReq.approvalMethod = 'AUTO';
+        newReq.approvedBy = userId;
+        newReq.approvedAt = new Date().toISOString();
+        return { success: true, request: newReq, autoApproved: true };
+      } catch (err: any) {
+        console.error('Auto-approval failed, keeping request as PENDING:', err.message);
+      }
     }
   }
 
@@ -350,21 +444,38 @@ export async function reviewStockRequest(
   requestId: string,
   status: 'APPROVED' | 'REJECTED',
   userId: string,
-  approvalMethod: 'MANUAL' | 'BULK' = 'MANUAL'
+  approvalMethod: 'MANUAL' | 'BULK' = 'MANUAL',
+  priceAction: 'APPROVE_PRICE' | 'REJECT_PRICE' | 'APPROVE_WITHOUT_PRICE' | 'NONE' = 'NONE'
 ): Promise<{ success: boolean; error?: string; request?: StockRequest }> {
   const reqRes = await pgDb.select().from(schema.stockRequests).where(eq(schema.stockRequests.id, requestId)).limit(1);
   if (reqRes.length === 0) return { success: false, error: 'Stock request not found.' };
   const req = reqRes[0];
 
-  if (req.status !== 'PENDING') return { success: false, error: 'Request is already reviewed.' };
+  if (req.status !== 'PENDING' && req.status !== 'PENDING_RATE_APPROVAL') {
+    return { success: false, error: 'Request is already reviewed.' };
+  }
 
   const varRes = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.id, req.variantId)).limit(1);
   if (varRes.length === 0) return { success: false, error: 'SKU variant not found.' };
   const variant = varRes[0];
 
+  let finalStatus: 'APPROVED' | 'REJECTED' = status;
+  let finalPriceStatus: 'APPROVED' | 'REJECTED' | null = req.priceChangeStatus as any;
+
+  if (priceAction === 'APPROVE_PRICE') {
+    finalStatus = 'APPROVED';
+    finalPriceStatus = 'APPROVED';
+  } else if (priceAction === 'REJECT_PRICE') {
+    finalStatus = 'REJECTED';
+    finalPriceStatus = 'REJECTED';
+  } else if (priceAction === 'APPROVE_WITHOUT_PRICE') {
+    finalStatus = 'APPROVED';
+    finalPriceStatus = 'REJECTED';
+  }
+
   let updatedRes;
   try {
-    if (status === 'APPROVED') {
+    if (finalStatus === 'APPROVED') {
       const allTxRes = await pgDb.select().from(schema.stockTransactions);
       const transactions = allTxRes.map((t: any) => ({
         id: t.id,
@@ -405,7 +516,8 @@ export async function reviewStockRequest(
 
     // Update request review fields with approval method
     updatedRes = await pgDb.update(schema.stockRequests).set({
-      status: status as any,
+      status: finalStatus as any,
+      priceChangeStatus: finalPriceStatus,
       approvalMethod: approvalMethod,
       reviewedBy: userId,
       reviewedAt: new Date(),
@@ -427,6 +539,11 @@ export async function reviewStockRequest(
     remarks: r.remarks || undefined,
     createdBy: r.createdBy,
     status: r.status as any,
+    originalWsp: r.originalWsp ? Number(r.originalWsp) : undefined,
+    originalMrp: r.originalMrp ? Number(r.originalMrp) : undefined,
+    requestedWsp: r.requestedWsp ? Number(r.requestedWsp) : undefined,
+    requestedMrp: r.requestedMrp ? Number(r.requestedMrp) : undefined,
+    priceChangeStatus: r.priceChangeStatus as any,
     approvalMethod: r.approvalMethod || undefined,
     reviewedBy: r.reviewedBy || undefined,
     reviewedAt: r.reviewedAt?.toISOString() || undefined,
@@ -435,13 +552,25 @@ export async function reviewStockRequest(
     createdAt: r.createdAt.toISOString()
   };
 
-  const actionType = status === 'APPROVED' 
+  const actionType = finalStatus === 'APPROVED' 
     ? (approvalMethod === 'BULK' ? 'BULK_APPROVED' : 'MANUALLY_APPROVED')
     : 'REJECTED';
 
   const profile = await getProfileById(userId);
   const username = profile ? profile.fullName : 'System';
-  const auditDesc = `Entity: stock_requests | Entity ID: ${req.id} | Username: ${username} | Description: Reviewed ${req.requestType} request for ${req.quantity} units of SKU "${variant.sku}" -> ${status}`;
+  
+  let auditDesc = `Entity: stock_requests | Entity ID: ${req.id} | Username: ${username} | Description: Reviewed ${req.requestType} request for ${req.quantity} units of SKU "${variant.sku}" -> ${finalStatus}`;
+  if (priceAction !== 'NONE' && req.requestedWsp) {
+    auditDesc += ` | PriceAction: ${priceAction} | SKU: ${variant.sku} | Orig WSP: ${req.originalWsp} | Req WSP: ${req.requestedWsp} | Orig MRP: ${req.originalMrp} | Req MRP: ${req.requestedMrp} | Status: ${finalPriceStatus}`;
+    
+    // Also log a specific PRICE_MODIFY audit record
+    await logAudit(
+      userId,
+      priceAction === 'APPROVE_PRICE' ? 'PRICE_APPROVED' : 'PRICE_REJECTED',
+      'INVENTORY',
+      `Price modification review: SKU "${variant.sku}" | Orig WSP: ${req.originalWsp} | Req WSP: ${req.requestedWsp} | Orig MRP: ${req.originalMrp} | Req MRP: ${req.requestedMrp} | Approved By: ${username} | Status: ${finalPriceStatus}`
+    );
+  }
 
   await logAudit(userId, actionType, 'INVENTORY', auditDesc);
 
@@ -932,7 +1061,7 @@ export async function approveAllPendingRequests(
   try {
     await pgDb.transaction(async (tx: any) => {
       const pendings = await tx.select().from(schema.stockRequests)
-        .where(eq(schema.stockRequests.status, 'PENDING' as any));
+        .where(inArray(schema.stockRequests.status, ['PENDING' as any, 'PENDING_RATE_APPROVAL' as any]));
 
       if (pendings.length === 0) return;
 
@@ -985,9 +1114,12 @@ export async function approveAllPendingRequests(
           createdBy: req.createdBy
         });
 
+        const isRateChange = req.status === 'PENDING_RATE_APPROVAL';
+
         // Update request status
         await tx.update(schema.stockRequests).set({
           status: 'APPROVED' as any,
+          priceChangeStatus: isRateChange ? 'APPROVED' : null,
           approvalMethod: 'BULK',
           reviewedBy: userId,
           reviewedAt: new Date(),

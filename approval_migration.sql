@@ -70,7 +70,16 @@ INSERT INTO approval_policies (transaction_key, display_name, approval_mode, thr
 ('ADJUSTMENT_OUT', 'Stock Adjustment (Out)', 'MANUAL', 0)
 ON CONFLICT (transaction_key) DO NOTHING;
 
--- Log migration
 INSERT INTO audit_logs (id, user_id, action, module, description) VALUES
 (uuid_generate_v4(), 'b1100000-0000-0000-0000-000000000001', 'MIGRATION_REFINED_APPROVAL', 'INVENTORY',
  'Refined approval policies table created and stock_requests altered with approved_by and approved_at columns.');
+
+-- 5. Refinements for Bulk Rate Approval feature
+ALTER TYPE request_status ADD VALUE IF NOT EXISTS 'PENDING_RATE_APPROVAL';
+
+ALTER TABLE stock_requests ADD COLUMN IF NOT EXISTS original_wsp NUMERIC(12, 2);
+ALTER TABLE stock_requests ADD COLUMN IF NOT EXISTS original_mrp NUMERIC(12, 2);
+ALTER TABLE stock_requests ADD COLUMN IF NOT EXISTS requested_wsp NUMERIC(12, 2);
+ALTER TABLE stock_requests ADD COLUMN IF NOT EXISTS requested_mrp NUMERIC(12, 2);
+ALTER TABLE stock_requests ADD COLUMN IF NOT EXISTS price_change_status VARCHAR(30);
+

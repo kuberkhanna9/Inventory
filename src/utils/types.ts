@@ -54,12 +54,17 @@ export interface StockRequest {
   invoiceNumber?: string; // required for SALE
   remarks?: string;
   createdBy: string; // references Profile.id
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'PENDING_RATE_APPROVAL';
   approvalMethod?: 'AUTO' | 'MANUAL' | 'BULK' | null;
   reviewedBy?: string; // references Profile.id
   reviewedAt?: string;
   approvedBy?: string; // references Profile.id
   approvedAt?: string;
+  originalWsp?: number;
+  originalMrp?: number;
+  requestedWsp?: number;
+  requestedMrp?: number;
+  priceChangeStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   createdAt: string;
 }
 

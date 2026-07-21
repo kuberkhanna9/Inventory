@@ -11,7 +11,7 @@ export const requestTypeEnum = pgEnum('request_type', [
   'ADJUSTMENT_IN',
   'ADJUSTMENT_OUT'
 ]);
-export const requestStatusEnum = pgEnum('request_status', ['PENDING', 'APPROVED', 'REJECTED']);
+export const requestStatusEnum = pgEnum('request_status', ['PENDING', 'APPROVED', 'REJECTED', 'PENDING_RATE_APPROVAL']);
 
 // 1. PROFILES Table
 export const profiles = pgTable('profiles', {
@@ -80,6 +80,11 @@ export const stockRequests = pgTable('stock_requests', {
   reviewedAt: timestamp('reviewed_at'),
   approvedBy: uuid('approved_by').references(() => profiles.id),
   approvedAt: timestamp('approved_at'),
+  originalWsp: numeric('original_wsp', { precision: 12, scale: 2 }),
+  originalMrp: numeric('original_mrp', { precision: 12, scale: 2 }),
+  requestedWsp: numeric('requested_wsp', { precision: 12, scale: 2 }),
+  requestedMrp: numeric('requested_mrp', { precision: 12, scale: 2 }),
+  priceChangeStatus: varchar('price_change_status', { length: 30 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

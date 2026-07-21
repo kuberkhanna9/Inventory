@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ComputedInventoryItem, StockTransaction, ProductVariant } from '@/utils/types';
+import { StockTransaction, ProductVariant } from '@/utils/types';
+import type { ComputedInventoryItem } from '@/utils/db';
 import { 
   FileSpreadsheet, 
   Download, 

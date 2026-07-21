@@ -14,7 +14,8 @@ import {
   updateApprovalPolicy,
   bulkReviewStockRequests,
   getStockRequests,
-  approveAllPendingRequests
+  approveAllPendingRequests,
+  getProducts
 } from '@/utils/db';
 import { getSession, authenticateUser, clearSession } from '@/utils/session';
 import { revalidatePath } from 'next/cache';
@@ -158,7 +159,10 @@ export async function createVariantAction(prevState: any, formData: FormData): P
   }
 
   try {
-    const variant = await createVariant(parsed.data);
+    const variant = await createVariant({
+      ...parsed.data,
+      sku: parsed.data.sku || `SKU-${Date.now()}`
+    });
     revalidatePath('/');
     revalidatePath('/inventory');
     return { success: true, message: `SKU "${variant.sku}" created successfully!`, data: variant };
@@ -288,9 +292,8 @@ export async function updatePricingAction(prevState: any, formData: FormData): P
 // BULK OPERATIONS ENGINE
 // -----------------------------------------------------------------------------
 export async function bulkOperationsAction(
-  variantIds: string[],
+  items: { variantId: string; quantity: number; wsp?: number; mrp?: number }[],
   requestType: 'STOCK_IN' | 'SALE' | 'DAMAGE_REPAIRABLE' | 'DAMAGE_NON_REPAIRABLE',
-  quantity: number,
   invoiceNumber?: string,
   referenceNumber?: string,
   remarks?: string
@@ -300,8 +303,7 @@ export async function bulkOperationsAction(
     return { success: false, error: 'Access Denied! Unauthorized department for bulk stock operations.' };
   }
 
-  if (variantIds.length === 0) return { success: false, error: 'No variant SKUs selected!' };
-  if (quantity <= 0) return { success: false, error: 'Quantity must be positive!' };
+  if (!items || items.length === 0) return { success: false, error: 'No variant SKUs selected!' };
   if (requestType === 'SALE' && !invoiceNumber) {
     return { success: false, error: 'Invoice number is required for wholesale bulk sales!' };
   }
@@ -310,20 +312,27 @@ export async function bulkOperationsAction(
     let successCount = 0;
     let failedCount = 0;
 
-    for (const vId of variantIds) {
+    for (const item of items) {
+      if (item.quantity <= 0) {
+        failedCount++;
+        continue;
+      }
+
       const data = {
-        variantId: vId,
+        variantId: item.variantId,
         requestType,
-        quantity,
+        quantity: item.quantity,
         referenceNumber,
         invoiceNumber,
-        remarks: remarks || 'Bulk operations post'
+        remarks: remarks || 'Bulk operations post',
+        requestedWsp: item.wsp,
+        requestedMrp: item.mrp
       };
 
       const result = await createStockRequest(data, user.id);
       if (result.success && result.request) {
         // Auto-approve if SuperAdmin
-        if (user.role === 'SUPERADMIN') {
+        if (user.role === 'SUPERADMIN' && result.request.status !== 'APPROVED') {
           const reviewRes = await reviewStockRequest(result.request.id, 'APPROVED', user.id);
           if (reviewRes.success) {
             successCount++;
@@ -345,7 +354,7 @@ export async function bulkOperationsAction(
     if (user.role === 'SUPERADMIN') {
       return { 
         success: true, 
-        message: `Bulk processing completed! Successfully approved & posted ${successCount} entries. (Failed: ${failedCount})`
+        message: `Bulk processing completed! Successfully processed ${successCount} entries. (Failed: ${failedCount})`
       };
     }
 
@@ -353,9 +362,8 @@ export async function bulkOperationsAction(
       success: true, 
       message: `Bulk requests created! Created ${successCount} pending ledger requests for approval.` 
     };
-
   } catch (err: any) {
-    return { success: false, error: err.message || 'Bulk operation failed' };
+    return { success: false, error: err.message || 'Failed to process bulk operation' };
   }
 }
 

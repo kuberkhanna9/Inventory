@@ -1,13 +1,13 @@
 'use client';
 
 import { useActionState } from 'react';
-import { recordTransactionAction } from '@/app/actions';
+import { createStockRequestAction } from '@/app/actions';
 import { Lock, PlusCircle, AlertCircle, ShieldAlert } from 'lucide-react';
-import { ProductVariant } from '@/utils/types';
+import type { ComputedInventoryItem } from '@/utils/db';
 
 interface TransactionFormProps {
   userRole: 'ADMIN' | 'STAFF';
-  variants: ProductVariant[];
+  variants: ComputedInventoryItem[];
 }
 
 const initialState = {
@@ -17,7 +17,7 @@ const initialState = {
 };
 
 export default function TransactionForm({ userRole, variants }: TransactionFormProps) {
-  const [state, formAction, isPending] = useActionState(recordTransactionAction, initialState);
+  const [state, formAction, isPending] = useActionState(createStockRequestAction, initialState);
 
   if (userRole === 'STAFF') {
     return (
@@ -54,8 +54,8 @@ export default function TransactionForm({ userRole, variants }: TransactionFormP
         >
           <option value="">Select SKU...</option>
           {variants.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.sku} ({v.color} - {v.size})
+            <option key={v.variantId} value={v.variantId}>
+              {v.sku} ({v.colorName} - {v.sizeName})
             </option>
           ))}
         </select>

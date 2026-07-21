@@ -79,11 +79,28 @@ export default function InventoryView({
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [bulkAction, setBulkAction] = useState<'STOCK_IN' | 'SALE' | 'DAMAGE_REPAIRABLE' | 'DAMAGE_NON_REPAIRABLE'>('STOCK_IN');
-  const [bulkQty, setBulkQty] = useState(10);
+  const [bulkItems, setBulkItems] = useState<{ variantId: string; sku: string; productName: string; colorName: string; sizeName: string; quantity: number; wsp: number; mrp: number }[]>([]);
   const [bulkRef, setBulkRef] = useState('');
   const [bulkInvoice, setBulkInvoice] = useState('');
   const [bulkRemarks, setBulkRemarks] = useState('');
   const [bulkFeedback, setBulkFeedback] = useState<{ success?: boolean; error?: string; message?: string }>({});
+
+  // Populate bulkItems when bulk modal opens or selection changes
+  useEffect(() => {
+    if (isBulkOpen) {
+      const selected = inventoryItems.filter(item => selectedVariantIds.includes(item.variantId));
+      setBulkItems(selected.map(item => ({
+        variantId: item.variantId,
+        sku: item.sku,
+        productName: item.productName,
+        colorName: item.colorName,
+        sizeName: item.sizeName,
+        quantity: 1,
+        wsp: item.wholesalePrice,
+        mrp: item.mrp
+      })));
+    }
+  }, [isBulkOpen, selectedVariantIds, inventoryItems]);
 
   // Label Printing states
   const [isLabelStudioOpen, setIsLabelStudioOpen] = useState(false);
@@ -349,10 +366,15 @@ export default function InventoryView({
     e.preventDefault();
     setBulkFeedback({});
     startTransition(async () => {
+      const payload = bulkItems.map(item => ({
+        variantId: item.variantId,
+        quantity: item.quantity,
+        wsp: item.wsp,
+        mrp: item.mrp
+      }));
       const res = await bulkOperationsAction(
-        selectedVariantIds,
+        payload,
         bulkAction,
-        bulkQty,
         bulkInvoice || undefined,
         bulkRef || undefined,
         bulkRemarks || undefined
@@ -1335,99 +1357,187 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           ----------------------------------------------------------------------------- */}
       {isBulkOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 no-print">
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full space-y-6 shadow-2xl">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-3xl w-full space-y-5 shadow-2xl max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3 shrink-0">
               <div>
                 <h3 className="text-base font-black text-slate-900 flex items-center gap-1.5">
-                  <Layers size={16} className="text-slate-800" />
+                  <Layers size={18} className="text-slate-800" />
                   <span>Execute Bulk Stock Action</span>
                 </h3>
-                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Affects {selectedVariantIds.length} selected SKUs.</p>
+                <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Adjust SKU-level quantities and custom pricing override per item.</p>
               </div>
-              <button onClick={() => setIsBulkOpen(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer">
+              <button onClick={() => setIsBulkOpen(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer p-1">
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleBulkSubmit} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-bold text-slate-400 uppercase mb-1">Bulk Action Type</label>
-                <select
-                  value={bulkAction}
-                  onChange={(e) => setBulkAction(e.target.value as any)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
-                >
-                  <option value="STOCK_IN">STOCK IN (Production completed)</option>
-                  <option value="SALE">SALE (Wholesale Dispatch)</option>
-                  <option value="DAMAGE_REPAIRABLE">DAMAGE: Repairable Stock</option>
-                  <option value="DAMAGE_NON_REPAIRABLE">DAMAGE: Non-Repairable Scrap</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={handleBulkSubmit} className="space-y-4 text-xs flex flex-col flex-1 overflow-hidden">
+              <div className="grid grid-cols-2 gap-4 shrink-0">
                 <div>
-                  <label className="block font-bold text-slate-400 uppercase mb-1">Quantity (pcs per SKU)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={bulkQty}
-                    onChange={(e) => setBulkQty(Number(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
-                  />
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Bulk Action Type</label>
+                  <select
+                    value={bulkAction}
+                    onChange={(e) => setBulkAction(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800 font-semibold"
+                  >
+                    <option value="STOCK_IN">STOCK IN (Production completed)</option>
+                    <option value="SALE">SALE (Wholesale Dispatch)</option>
+                    <option value="DAMAGE_REPAIRABLE">DAMAGE: Repairable Stock</option>
+                    <option value="DAMAGE_NON_REPAIRABLE">DAMAGE: Non-Repairable Scrap</option>
+                  </select>
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-400 uppercase mb-1">Invoice Number</label>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Invoice Number {bulkAction === 'SALE' && <span className="text-red-500">*</span>}</label>
                   <input
                     type="text"
                     required={bulkAction === 'SALE'}
                     placeholder="INV-1234"
                     value={bulkInvoice}
                     onChange={(e) => setBulkInvoice(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:border-slate-800 font-mono"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800 font-mono"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-400 uppercase mb-1">Reference Code / PO</label>
-                <input
-                  type="text"
-                  placeholder="PO-2026-004"
-                  value={bulkRef}
-                  onChange={(e) => setBulkRef(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:border-slate-800 font-mono"
-                />
+              {/* SKU List Table */}
+              <div className="flex-1 overflow-y-auto border border-slate-200 rounded-2xl min-h-[180px]">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200 text-[10px] uppercase font-black text-slate-400">
+                    <tr>
+                      <th className="px-3.5 py-2.5">SKU & Details</th>
+                      <th className="px-3 py-2.5 w-24 text-center">Qty (PCS)</th>
+                      <th className="px-3 py-2.5 w-28 text-right">WSP (₹)</th>
+                      <th className="px-3 py-2.5 w-28 text-right">MRP (₹)</th>
+                      <th className="px-2 py-2.5 w-10 text-center"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium">
+                    {bulkItems.map((item, idx) => {
+                      const origItem = inventoryItems.find(i => i.variantId === item.variantId);
+                      const isRateChanged = origItem && (item.wsp !== origItem.wholesalePrice || item.mrp !== origItem.mrp);
+                      return (
+                        <tr key={item.variantId} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-3.5 py-2.5">
+                            <div className="font-mono font-bold text-slate-900">{item.sku}</div>
+                            <div className="text-[10px] text-slate-500 font-semibold">
+                              {item.productName} ({item.colorName} / {item.sizeName})
+                            </div>
+                            {isRateChanged && (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-0.5">
+                                Rate Modified (Pending Approval)
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setBulkItems(prev => prev.map((it, i) => i === idx ? { ...it, quantity: val } : it));
+                              }}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-center font-mono font-bold focus:bg-white focus:outline-none focus:border-slate-800"
+                            />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.wsp}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setBulkItems(prev => prev.map((it, i) => i === idx ? { ...it, wsp: val } : it));
+                              }}
+                              className={`w-full border rounded-lg px-2 py-1 text-right font-mono font-bold focus:outline-none focus:border-slate-800 ${
+                                origItem && item.wsp !== origItem.wholesalePrice ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-slate-50 border-slate-200'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.mrp}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setBulkItems(prev => prev.map((it, i) => i === idx ? { ...it, mrp: val } : it));
+                              }}
+                              className={`w-full border rounded-lg px-2 py-1 text-right font-mono font-bold focus:outline-none focus:border-slate-800 ${
+                                origItem && item.mrp !== origItem.mrp ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-slate-50 border-slate-200'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-2 py-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setBulkItems(prev => prev.filter((_, i) => i !== idx))}
+                              className="text-slate-300 hover:text-red-500 cursor-pointer p-1 transition-colors"
+                              title="Remove item"
+                            >
+                              <X size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-400 uppercase mb-1">Remarks</label>
-                <textarea
-                  rows={2}
-                  placeholder="Operational details on bulk batch dispatch..."
-                  value={bulkRemarks}
-                  onChange={(e) => setBulkRemarks(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-700 focus:outline-none focus:border-slate-800 resize-none"
-                />
+              {/* Summary Bar */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs shrink-0">
+                <span className="font-bold text-slate-500">
+                  Total Items: <span className="text-slate-900 font-extrabold">{bulkItems.length} SKUs</span>
+                </span>
+                <span className="font-bold text-slate-500">
+                  Total Quantity: <span className="text-slate-900 font-mono font-extrabold">{bulkItems.reduce((acc, item) => acc + (item.quantity || 0), 0)} PCS</span>
+                </span>
+                <span className="font-bold text-slate-500">
+                  Total WSP Value: <span className="text-emerald-700 font-mono font-extrabold">₹{bulkItems.reduce((acc, item) => acc + ((item.quantity || 0) * (item.wsp || 0)), 0).toLocaleString('en-IN')}</span>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 shrink-0">
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Reference Code / PO</label>
+                  <input
+                    type="text"
+                    placeholder="PO-2026-004"
+                    value={bulkRef}
+                    onChange={(e) => setBulkRef(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-400 uppercase mb-1">Remarks</label>
+                  <input
+                    type="text"
+                    placeholder="Operational details..."
+                    value={bulkRemarks}
+                    onChange={(e) => setBulkRemarks(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
+                  />
+                </div>
               </div>
 
               {bulkFeedback.error && (
-                <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl p-3 leading-relaxed font-semibold">
+                <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl p-3 leading-relaxed font-semibold shrink-0">
                   {bulkFeedback.error}
                 </div>
               )}
               {bulkFeedback.success && bulkFeedback.message && (
-                <div className="bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl p-3 leading-relaxed font-semibold">
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl p-3 leading-relaxed font-semibold shrink-0">
                   {bulkFeedback.message}
                 </div>
               )}
 
               <button
                 type="submit"
-                disabled={isPending}
-                className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+                disabled={isPending || bulkItems.length === 0}
+                className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-slate-700 cursor-pointer disabled:opacity-50 shrink-0"
               >
-                {isPending ? 'Generating ledger dispatches...' : 'Execute Bulk Action'}
+                {isPending ? 'Generating ledger dispatches...' : `Execute Bulk Action (${bulkItems.length} Items)`}
               </button>
             </form>
           </div>
