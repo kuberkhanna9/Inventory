@@ -31,17 +31,37 @@ export function getVariantStock(variantId: string, transactions: StockTransactio
 // CRUD LAYER (Direct Drizzle/Postgres ONLY - Mock-DB fallback removed)
 // -----------------------------------------------------------------------------
 
+import { FIXED_ACCOUNTS } from './session';
+
 // Profiles
 export async function getProfileById(id: string): Promise<Profile | null> {
-  const res = await pgDb.select().from(schema.profiles).where(eq(schema.profiles.id, id)).limit(1);
-  if (res.length === 0) return null;
-  return {
-    id: res[0].id,
-    fullName: res[0].fullName,
-    role: res[0].role as any,
-    active: res[0].active,
-    createdAt: res[0].createdAt.toISOString()
-  };
+  try {
+    const res = await pgDb.select().from(schema.profiles).where(eq(schema.profiles.id, id)).limit(1);
+    if (res.length > 0) {
+      return {
+        id: res[0].id,
+        fullName: res[0].fullName,
+        role: res[0].role as any,
+        active: res[0].active,
+        createdAt: res[0].createdAt.toISOString()
+      };
+    }
+  } catch (err) {
+    // Database query failed, fallback to predefined account check
+  }
+
+  const fixed = FIXED_ACCOUNTS.find(acc => acc.id === id);
+  if (fixed) {
+    return {
+      id: fixed.id,
+      fullName: fixed.fullName,
+      role: fixed.role,
+      active: fixed.active,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  return null;
 }
 
 // Products

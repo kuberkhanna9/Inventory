@@ -173,7 +173,7 @@ export async function createVariantAction(prevState: any, formData: FormData): P
 
 export async function createStockRequestAction(prevState: any, formData: FormData): Promise<{ success: boolean; error?: string; message?: string; data?: any }> {
   const user = await getSession();
-  if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'INVENTORY')) {
+  if (!user || (user.role.toUpperCase() !== 'SUPERADMIN' && user.role.toUpperCase() !== 'INVENTORY')) {
     return { success: false, error: 'Access Denied! Only Inventory Dept or SuperAdmin can request stock operations.' };
   }
 
@@ -560,7 +560,8 @@ export async function exportSelectedRequestsAction(
   requestIds: string[]
 ): Promise<{ success: boolean; error?: string; data?: any[] }> {
   const user = await getSession();
-  if (!user || (user.role !== 'SUPERADMIN' && user.role !== 'ACCOUNTS')) {
+  const role = user?.role?.toUpperCase();
+  if (!user || (role !== 'SUPERADMIN' && role !== 'INVENTORY' && role !== 'ACCOUNTS')) {
     return { success: false, error: 'Access Denied! Insufficient permissions for export.' };
   }
 

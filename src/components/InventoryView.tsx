@@ -1433,6 +1433,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                             <input
                               type="number"
                               min="1"
+                              step="1"
                               value={item.quantity}
                               onChange={(e) => {
                                 const val = Number(e.target.value);
@@ -1445,6 +1446,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                             <input
                               type="number"
                               min="0"
+                              step="any"
                               value={item.wsp}
                               onChange={(e) => {
                                 const val = Number(e.target.value);
@@ -1459,6 +1461,7 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                             <input
                               type="number"
                               min="0"
+                              step="any"
                               value={item.mrp}
                               onChange={(e) => {
                                 const val = Number(e.target.value);
@@ -1953,7 +1956,8 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                     type="number"
                     name="costPrice"
                     required
-                    min="1"
+                    min="0"
+                    step="any"
                     placeholder="1650"
                     className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none font-mono"
                   />
@@ -1964,7 +1968,8 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                     type="number"
                     name="wholesalePrice"
                     required
-                    min="1"
+                    min="0"
+                    step="any"
                     placeholder="2850"
                     className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none font-mono"
                   />
@@ -1975,7 +1980,8 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
                     type="number"
                     name="mrp"
                     required
-                    min="1"
+                    min="0"
+                    step="any"
                     placeholder="4995"
                     className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none font-mono"
                   />

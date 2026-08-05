@@ -54,20 +54,24 @@ export function hashPassword(password: string): string {
 }
 
 export async function getSession(): Promise<UserSession | null> {
-  const cookieStore = await cookies();
-  const username = cookieStore.get('ljk_user')?.value;
-  if (!username) return null;
+  try {
+    const cookieStore = await cookies();
+    const username = cookieStore.get('ljk_user')?.value;
+    if (!username) return null;
 
-  const account = FIXED_ACCOUNTS.find(acc => acc.username === username);
-  if (!account) return null;
+    const account = FIXED_ACCOUNTS.find(acc => acc.username.toLowerCase() === username.trim().toLowerCase());
+    if (!account) return null;
 
-  return {
-    id: account.id,
-    username: account.username,
-    fullName: account.fullName,
-    role: account.role,
-    active: account.active
-  };
+    return {
+      id: account.id,
+      username: account.username,
+      fullName: account.fullName,
+      role: account.role,
+      active: account.active
+    };
+  } catch (err) {
+    return null;
+  }
 }
 
 export async function authenticateUser(username: string, password: string): Promise<UserSession | null> {
