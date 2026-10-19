@@ -323,8 +323,8 @@ export default function InventoryView({
       return matchesProduct && matchesCategory && matchesColor && matchesSize;
     }
 
-    // Exact matches first (Barcode and SKU are checked explicitly)
-    const barcodeMatch = item.barcode.toLowerCase() === term;
+    // Exact and partial barcode matching
+    const barcodeMatch = item.barcode ? (item.barcode.toLowerCase() === term || item.barcode.toLowerCase().includes(term)) : false;
     const skuMatch = item.sku.toLowerCase() === term;
     
     // Fuzzy searches
@@ -348,8 +348,8 @@ export default function InventoryView({
     const barcode = scanInput.trim();
     if (!barcode) return;
 
-    // Fast priority barcode matching
-    const item = inventoryItems.find(v => v.barcode === barcode || v.sku.toUpperCase() === barcode.toUpperCase());
+    // Fast priority barcode matching (checks exact barcode first, then SKU)
+    const item = inventoryItems.find(v => (v.barcode && v.barcode.toLowerCase() === barcode.toLowerCase()) || v.sku.toUpperCase() === barcode.toUpperCase());
     if (item) {
       setSelectedVariant(item);
       setIsDrawerOpen(true);
@@ -468,29 +468,34 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
   const processSheetData = (rawRows: any[][], headerRowIndex: number) => {
     if (!rawRows || rawRows.length < headerRowIndex) return;
 
-    // Dedicated template header is always Row 1 (headerRowIndex = 1)
+    // Header extraction
     const headerRow = rawRows[headerRowIndex - 1] || [];
     const headers = headerRow.map((val: any) => String(val || '').trim());
     
-    // Ensure all required template headers are present
-    const requiredCols = [
-      'Product Name',
-      'Category / Type',
-      'UPC No',
-      'Barcode (Primary Unique Key)',
-      'Color',
-      'Size',
-      'Rack Location',
-      'Available Quantity',
-      'Cost Price',
-      'Wholesale Price',
-      'MRP'
-    ];
+    // Resolve column aliases
+    const findHeader = (aliases: string[]) => headers.find(h => aliases.some(a => a.toLowerCase() === h.toLowerCase().trim()));
+    
+    const barcodeH = findHeader(['Barcode (Primary Unique Key)', 'Barcode (PUK)', 'Barcode', 'BARCODE']);
+    const nameH = findHeader(['Product Name', 'Product', 'Name', 'NAME', 'Design No.', 'DESIGN NO.', 'UPC No', 'UPC NO.', 'Discription']);
+    const colorH = findHeader(['Color', 'COLOR', 'Colour', 'Colour ']);
+    const sizeH = findHeader(['Size', 'SIZE']);
+    const mrpH = findHeader(['MRP', 'Mrp']);
+    const qtyH = findHeader(['Available Quantity', 'Available Qty', 'TOTAL STOCK', 'TOTAL REC.', 'BAL.', 'Quantity', 'Qty']);
+    const costH = findHeader(['Cost Price', 'COST PRICE']);
+    const wholesaleH = findHeader(['Wholesale Price', 'WHOLESALE PRICE']);
+    const rackH = findHeader(['Rack Location', 'RACK NO.', 'Location']);
+    const categoryH = findHeader(['Category / Type', 'Category', 'TYPE', 'Type']);
 
-    const missingCols = requiredCols.filter(col => !headers.includes(col));
-    if (missingCols.length > 0) {
+    const missingEssential: string[] = [];
+    if (!barcodeH) missingEssential.push('Barcode (or BARCODE)');
+    if (!nameH) missingEssential.push('Product Name (or DESIGN NO.)');
+    if (!colorH) missingEssential.push('Color');
+    if (!sizeH) missingEssential.push('Size');
+    if (!mrpH) missingEssential.push('MRP');
+
+    if (missingEssential.length > 0) {
       setValidationErrors([
-        `Invalid Template Format! The uploaded worksheet is missing required columns: ${missingCols.join(', ')}. Please use the standard Knitwear Import Template.`
+        `Invalid Template Format! The uploaded worksheet is missing required columns: ${missingEssential.join(', ')}. Please use the standard Knitwear Import Template or ensure headers are labeled appropriately.`
       ]);
       setExcelData([]);
       return;
@@ -504,6 +509,17 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
       headers.forEach((h, colIdx) => {
         obj[h] = row[colIdx];
       });
+      // Normalize aliases to canonical template property names
+      if (barcodeH && !obj['Barcode (Primary Unique Key)']) obj['Barcode (Primary Unique Key)'] = String(obj[barcodeH] || '').trim();
+      if (nameH && !obj['Product Name']) obj['Product Name'] = String(obj[nameH] || '').trim();
+      if (colorH && !obj['Color']) obj['Color'] = String(obj[colorH] || '').trim();
+      if (sizeH && !obj['Size']) obj['Size'] = String(obj[sizeH] || '').trim();
+      if (mrpH && !obj['MRP']) obj['MRP'] = obj[mrpH];
+      if (qtyH && !obj['Available Quantity']) obj['Available Quantity'] = obj[qtyH];
+      if (costH && !obj['Cost Price']) obj['Cost Price'] = obj[costH];
+      if (wholesaleH && !obj['Wholesale Price']) obj['Wholesale Price'] = obj[wholesaleH];
+      if (rackH && !obj['Rack Location']) obj['Rack Location'] = obj[rackH];
+      if (categoryH && !obj['Category / Type']) obj['Category / Type'] = obj[categoryH];
       return obj;
     });
 
@@ -532,9 +548,26 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           return;
         }
 
+        // Auto-detect header row index (1-based)
+        let detectedHeader = 1;
+        for (let r = 0; r < Math.min(6, rawRows.length); r++) {
+          const rowArr = rawRows[r];
+          if (Array.isArray(rowArr)) {
+            const hasBarcode = rowArr.some((c: any) => String(c || '').toUpperCase().includes('BARCODE'));
+            const hasName = rowArr.some((c: any) => {
+              const str = String(c || '').toUpperCase();
+              return str.includes('PRODUCT') || str.includes('DESIGN') || str.includes('DISCRIPTION') || str.includes('UPC');
+            });
+            if (hasBarcode && hasName) {
+              detectedHeader = r + 1;
+              break;
+            }
+          }
+        }
+
         setExcel2DData(rawRows);
-        setHeaderRowNumber(1);
-        processSheetData(rawRows, 1);
+        setHeaderRowNumber(detectedHeader);
+        processSheetData(rawRows, detectedHeader);
 
       } catch (err: any) {
         setValidationErrors([`File reading error: ${err.message}`]);
@@ -554,12 +587,12 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
 
     const barcodes = new Set<string>();
     excelData.forEach((row, index) => {
-      const barcode = String(row['Barcode (Primary Unique Key)'] || '').trim();
-      const name = String(row['Product Name'] || '').trim();
-      const color = String(row['Color'] || '').trim();
-      const size = String(row['Size'] || '').trim();
+      const barcode = String(row['Barcode (Primary Unique Key)'] || row['Barcode'] || row['BARCODE'] || '').trim();
+      const name = String(row['Product Name'] || row['DESIGN NO.'] || row['UPC NO.'] || '').trim();
+      const color = String(row['Color'] || row['COLOR'] || '').trim();
+      const size = String(row['Size'] || row['SIZE'] || '').trim();
       const mrp = Number(row['MRP'] || 0);
-      const totalStock = Number(row['Available Quantity'] || 0);
+      const totalStock = Number(row['Available Quantity'] || row['TOTAL STOCK'] || row['BAL.'] || 0);
 
       // Barcode validation (Mandatory and Unique inside sheet)
       if (!barcode) {
@@ -594,11 +627,11 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           let unchangedItems = 0;
 
           for (const row of excelData) {
-            const barcodeVal = String(row['Barcode (Primary Unique Key)'] || '').trim();
-            const targetQty = Number(row['Available Quantity'] || 0);
+            const barcodeVal = String(row['Barcode (Primary Unique Key)'] || row['Barcode'] || row['BARCODE'] || '').trim();
+            const targetQty = Number(row['Available Quantity'] || row['TOTAL STOCK'] || row['BAL.'] || 0);
             
-            // Match records by Barcode PUK
-            const variant = inventoryItems.find(v => v.barcode === barcodeVal);
+            // Match records by Barcode PUK, then fallback to SKU
+            const variant = inventoryItems.find(v => (v.barcode && v.barcode.toLowerCase() === barcodeVal.toLowerCase()) || (v.sku && v.sku.toLowerCase() === barcodeVal.toLowerCase()));
 
             if (!variant) continue;
 
@@ -641,19 +674,19 @@ XLSX.utils.book_append_sheet(wb, ws, 'Inventory Template');
           const itemsSkipped: string[] = [];
 
           for (const row of excelData) {
-            const barcodeVal = String(row['Barcode (Primary Unique Key)'] || '').trim();
-            const productNameVal = String(row['Product Name'] || '').trim();
-            const categoryVal = String(row['Category / Type'] || 'Ponchos').trim();
-            const colorVal = String(row['Color'] || 'Free').trim();
-            const sizeVal = String(row['Size'] || 'FS').trim();
+            const barcodeVal = String(row['Barcode (Primary Unique Key)'] || row['Barcode'] || row['BARCODE'] || '').trim();
+            const productNameVal = String(row['Product Name'] || row['DESIGN NO.'] || row['UPC NO.'] || '').trim();
+            const categoryVal = String(row['Category / Type'] || row['TYPE'] || 'Ponchos').trim();
+            const colorVal = String(row['Color'] || row['COLOR'] || 'Free').trim();
+            const sizeVal = String(row['Size'] || row['SIZE'] || 'FS').trim();
             const mrpVal = Number(row['MRP'] || 0);
-            const rackVal = String(row['Rack Location'] || 'Warehouse').trim();
+            const rackVal = String(row['Rack Location'] || row['RACK NO.'] || 'Warehouse').trim();
             const costVal = Number(row['Cost Price'] || Math.round(mrpVal * 0.4));
             const wholesaleVal = Number(row['Wholesale Price'] || Math.round(mrpVal * 0.6));
-            const availableQtyVal = Number(row['Available Quantity'] || 0);
+            const availableQtyVal = Number(row['Available Quantity'] || row['TOTAL STOCK'] || row['BAL.'] || 0);
 
-            // 1. Check if barcode already exists in DB
-            let existingVariant = inventoryItems.find(v => v.barcode === barcodeVal);
+            // 1. Check if barcode already exists in DB (match by barcode or sku)
+            let existingVariant = inventoryItems.find(v => (v.barcode && v.barcode.toLowerCase() === barcodeVal.toLowerCase()) || (v.sku && v.sku.toLowerCase() === barcodeVal.toLowerCase()));
 
             if (existingVariant) {
               // Existing barcodes update records!

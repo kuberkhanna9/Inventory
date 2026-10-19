@@ -54,6 +54,7 @@ export const productVariants = pgTable('product_variants', {
   id: uuid('id').defaultRandom().primaryKey(),
   productId: uuid('product_id').references(() => products.id, { onDelete: 'cascade' }).notNull(),
   sku: varchar('sku', { length: 100 }).unique().notNull(),
+  barcode: varchar('barcode', { length: 100 }),
   colorId: uuid('color_id').references(() => productColors.id, { onDelete: 'restrict' }).notNull(),
   sizeId: uuid('size_id').references(() => productSizes.id, { onDelete: 'restrict' }).notNull(),
   costPrice: numeric('cost_price', { precision: 12, scale: 2 }).notNull(),

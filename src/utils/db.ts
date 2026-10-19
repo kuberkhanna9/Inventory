@@ -140,7 +140,7 @@ export async function getVariants(productId?: string): Promise<ProductVariant[]>
     id: v.id,
     productId: v.productId,
     sku: v.sku,
-    barcode: v.sku, // standard mapping fallback
+    barcode: v.barcode || v.sku,
     colorId: v.colorId,
     sizeId: v.sizeId,
     costPrice: Number(v.costPrice),
@@ -152,11 +152,19 @@ export async function getVariants(productId?: string): Promise<ProductVariant[]>
   }));
 }
 
-export async function createVariant(data: Omit<ProductVariant, 'id' | 'createdAt' | 'active' | 'colorId' | 'sizeId'> & { colorName: string; sizeName: string }): Promise<ProductVariant> {
-  // 1. Enforce barcode uniqueness
+export async function createVariant(data: Omit<ProductVariant, 'id' | 'createdAt' | 'active' | 'colorId' | 'sizeId' | 'barcode'> & { colorName: string; sizeName: string; barcode?: string }): Promise<ProductVariant> {
+  // 1. Enforce SKU uniqueness
   const existingVar = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.sku, data.sku)).limit(1);
   if (existingVar.length > 0) {
     throw new Error(`SKU error: SKU "${data.sku}" is already registered.`);
+  }
+
+  // Check barcode uniqueness if provided
+  if (data.barcode) {
+    const existingBarcode = await pgDb.select().from(schema.productVariants).where(eq(schema.productVariants.barcode, data.barcode)).limit(1);
+    if (existingBarcode.length > 0) {
+      throw new Error(`Barcode error: Barcode "${data.barcode}" is already registered.`);
+    }
   }
 
   // 2. Find or create color
@@ -201,6 +209,7 @@ export async function createVariant(data: Omit<ProductVariant, 'id' | 'createdAt
   const res = await pgDb.insert(schema.productVariants).values({
     productId: data.productId,
     sku: data.sku,
+    barcode: data.barcode || null,
     colorId,
     sizeId,
     costPrice: String(data.costPrice),
@@ -210,12 +219,12 @@ export async function createVariant(data: Omit<ProductVariant, 'id' | 'createdAt
   }).returning();
 
   const v = res[0];
-  await logAudit('usr-superadmin', 'CREATE', 'VARIANTS', `Registered new variant SKU "${v.sku}"`);
+  await logAudit('usr-superadmin', 'CREATE', 'VARIANTS', `Registered new variant SKU "${v.sku}" (Barcode: "${v.barcode || v.sku}")`);
   return {
     id: v.id,
     productId: v.productId,
     sku: v.sku,
-    barcode: v.sku,
+    barcode: v.barcode || v.sku,
     colorId: v.colorId,
     sizeId: v.sizeId,
     costPrice: Number(v.costPrice),
@@ -658,7 +667,7 @@ export async function getComputedInventory(includeDeleted?: boolean): Promise<Co
       variantId: v.id,
       productId: prod.id,
       sku: v.sku,
-      barcode: v.sku,
+      barcode: v.barcode || v.sku,
       productName: prod.productName,
       category: prod.category,
       colorName: colorObj ? colorObj.colorName : 'Unknown',
@@ -857,7 +866,7 @@ export async function deleteVariant(variantId: string, userId: string): Promise<
     userId,
     'DELETE_SKU',
     'CATALOG',
-    `Soft deleted SKU "${variant.sku}" (Barcode: "${variant.sku}")`
+    `Soft deleted SKU "${variant.sku}" (Barcode: "${variant.barcode || variant.sku}")`
   );
 
   return true;
